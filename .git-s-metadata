@@ -1,0 +1,15 @@
+GSMetadata {
+	#version : 1,
+	#mappers : OrderedCollection [
+		GSTonelMapper {
+			#version : 1,
+			#package : MCPackage {
+				#name : 'SqueakTerminal'
+			},
+			#path : FSAbsolutePath [
+				'src'
+			]
+		}
+	],
+	#name : 'squeak-terminal'
+}
