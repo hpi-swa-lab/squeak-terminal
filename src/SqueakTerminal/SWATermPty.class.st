@@ -159,20 +159,6 @@ SWATermPty >> isRunning [
 ]
 
 {
-	#category : #'initialize-release',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:17'
-}
-SWATermPty >> markStale [
-	"Called after image load. The child process is dead and the C buffers are
-	 dangling. Drop the fd/pid and buffer references WITHOUT touching FFI --
-	 do not close: a stale fd or free: a dangling pointer."
-	masterFd := -1.
-	childPid := -1.
-	argvBuf := nil.
-	cstrings := nil
-]
-
-{
 	#category : #accessing,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:53'
 }

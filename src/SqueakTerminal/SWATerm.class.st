@@ -201,16 +201,6 @@ SWATerm >> isDead [
 ]
 
 {
-	#category : #testing,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:16'
-}
-SWATerm >> isStale [
-	"True when the libvterm handles are missing (never initialised, freed, or
-	 wiped after an image load). A stale terminal must not be used for FFI."
-	^ vt isNil or: [ screen isNil or: [ state isNil ] ]
-]
-
-{
 	#category : #'input-keys',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
 }
@@ -285,20 +275,6 @@ SWATerm >> keyTab [	^ 2
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
 }
 SWATerm >> keyUp [	^ 5
-]
-
-{
-	#category : #'initialize-release',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:16'
-}
-SWATerm >> markStale [
-	"Called after image load. The C-space handles (vt/screen/state) point into
-	 the previous process and are now garbage. Do NOT vterm_free: them -- the
-	 pointer is dangling and freeing would segfault. Just drop the references so
-	 the terminal is inert (isStale answers true, drawing short-circuits)."
-	vt := nil.
-	screen := nil.
-	state := nil
 ]
 
 {
