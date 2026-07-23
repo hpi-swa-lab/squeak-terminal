@@ -2,7 +2,7 @@
 Owns a forkpty'd child shell and its PTY master fd.
 
 Usage:
-  pty := SWATerminalPty command: '/bin/bash' args: #('-i').
+  pty := SWATermPty command: '/bin/bash' args: #('-i').
   pty spawn.                 -- forkpty + execvp in child
   bytes := pty readAvailable.-- non-blocking read from master
   pty write: aByteArray.     -- write keystrokes to master
@@ -13,7 +13,7 @@ The child inherits the PTY slave as stdin/stdout/stderr with a controlling tty,
 so interactive programs (bash, vim) work.
 
 IMPORTANT: the master fd is set non-blocking so #readAvailable never stalls the
-image; the pump loop (in SWATerminalMorph) polls it.
+image; the pump loop (in SWATermMorph) polls it.
 "
 Class {
 	#name : #SWATermPty,

@@ -1,5 +1,5 @@
 "
-High-level wrapper around a libvterm instance (via SWAVTermLibrary).
+High-level wrapper around a libvterm instance (via SWATermLibrary).
 
 Owns the VTerm / VTermScreen / VTermState handles and the grid dimensions.
 Feed emulator with PTY output via #feed:, read the grid via #cellAt:at:,
@@ -7,10 +7,10 @@ query the cursor via #cursorPos, send keystrokes via #keyChar:/#keyCode:,
 and drain the bytes to write back to the PTY via #drainOutput.
 
 This class knows nothing about Morphic or the PTY -- it is the pure
-terminal-emulation model. SWATerminalMorph is the view; a PTY backend
+terminal-emulation model. SWATermMorph is the view; a PTY backend
 drives #feed: and consumes #drainOutput.
 
-Create with:  SWATerminal rows: 24 cols: 80
+Create with:  SWATerm rows: 24 cols: 80
 "
 Class {
 	#name : #SWATerm,

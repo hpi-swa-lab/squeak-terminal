@@ -1,6 +1,6 @@
 "
 Minimal FFI bindings to the C standard library (libc.so.6) needed to run a
-pseudo-terminal shell for SWATerminal.
+pseudo-terminal shell for SWATerm.
 
 Functions: forkpty, execvp, read, write, close, ioctl (TIOCSWINSZ),
 fcntl (set non-blocking), waitpid, kill.

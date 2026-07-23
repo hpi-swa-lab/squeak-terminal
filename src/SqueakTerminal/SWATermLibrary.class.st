@@ -3,15 +3,15 @@ FFI bindings to libvterm.so (VT100/VT102/xterm emulation library, https://github
 
 The library does all VT parsing, screen buffering, SGR/color/mode handling. Smalltalk feeds bytes from a PTY via vterm_input_write: and reads back the screen grid via vterm_screen_get_cell:.
 
-Module path: libvterm.so in the squeak working directory (copied from Debian libvterm0 0.1.4).
+Loaded by the bare module name 'vterm' (libvterm.so, copied from Debian libvterm0 0.1.4, sitting next to the image).
 
 Handles (VTerm*, VTermScreen*, VTermState*) are opaque C pointers held as Smalltalk integers/ExternalAddress.
 
 Typical flow:
-  vt := SWAVTermLibrary default vterm_new_rows: 24 cols: 80.
-  screen := SWAVTermLibrary default vterm_obtain_screen: vt.
-  SWAVTermLibrary default vterm_screen_reset: screen hard: 1.
-  SWAVTermLibrary default vterm_input: vt write: 'hi' size: 2.
+  vt := SWATermLibrary default vterm_new_rows: 24 cols: 80.
+  screen := SWATermLibrary default vterm_obtain_screen: vt.
+  SWATermLibrary default vterm_screen_reset: screen hard: 1.
+  SWATermLibrary default vterm_input: vt write: 'hi' size: 2.
   cell read via vterm_screen_get_cell.
 "
 Class {
