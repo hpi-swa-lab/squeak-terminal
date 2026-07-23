@@ -28,6 +28,16 @@ Class {
 }
 
 {
+	#category : #'class initialization',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:45'
+}
+SWATerm class >> initialize [
+	" self initialize "
+
+	Smalltalk addToStartUpList: self.
+]
+
+{
 	#category : #'instance creation',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:47'
 }
@@ -36,12 +46,44 @@ SWATerm class >> rows: r cols: c [
 ]
 
 {
+	#category : #'system startup',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:45'
+}
+SWATerm class >> startUp: resuming [
+	"resuming = true means the image was just loaded fresh from disk: every
+	 libvterm handle belongs to the previous process and is dead. Mark every
+	 terminal dead so all FFI methods bail (isDead) instead of segfaulting.
+	 resuming = false is a same-process continuation -- handles are still valid,
+	 leave them alone."
+	resuming ifFalse: [ ^ self ].
+	self allInstancesDo: [ :t | t beDead ]
+]
+
+{
+	#category : #'initialize-release',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:39'
+}
+SWATerm >> beDead [
+	"Mark this terminal's libvterm handles dead, idempotently. Safe to call any
+	 number of times and in any state (nil, live ExternalData, already null).
+	 Nulls the underlying ExternalAddress so isDead answers true but the ivars
+	 keep their shape. Does NOT call vterm_free: (the pointer may be dangling)."
+	#(vt screen state) do: [ :ivar | | h |
+		h := self instVarNamed: ivar.
+		h ifNotNil: [
+			(h respondsTo: #getHandle)
+				ifTrue: [ h getHandle isNull ifFalse: [ h getHandle beNull ] ]
+				ifFalse: [ (h respondsTo: #beNull) ifTrue: [ h isNull ifFalse: [ h beNull ] ] ] ] ]
+]
+
+{
 	#category : #emulation,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:35'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:28'
 }
 SWATerm >> cellAt: row at: col [
 	"Return a fresh SWATermCell for the given 0-based row/col, or nil if out of range."
 	| pos cell |
+	self isDead ifTrue: [ ^ nil ].
 	(row between: 0 and: rows - 1) ifFalse: [ ^ nil ].
 	(col between: 0 and: cols - 1) ifFalse: [ ^ nil ].
 	pos := SWATermPos new.
@@ -61,11 +103,12 @@ SWATerm >> cols [
 
 {
 	#category : #emulation,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:35'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
 SWATerm >> cursorPos [
 	"Return the cursor position as a Point (col @ row), 0-based."
 	| pos |
+	self isDead ifTrue: [ ^ 0 @ 0 ].
 	pos := SWATermPos new.
 	lib vterm_state: state getCursorPos: pos.
 	^ pos col @ pos row
@@ -73,12 +116,13 @@ SWATerm >> cursorPos [
 
 {
 	#category : #input,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
 SWATerm >> drainOutput [
 	"Read all pending encoded output bytes (from keystrokes / terminal replies).
 	 Returns a ByteArray to be written to the PTY, or empty if none."
 	| buf n out total |
+	self isDead ifTrue: [ ^ #[] ].
 	buf := ByteArray new: 256.
 	out := WriteStream on: (ByteArray new: 64).
 	total := 0.
@@ -92,12 +136,13 @@ SWATerm >> drainOutput [
 
 {
 	#category : #emulation,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 13:32'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
 SWATerm >> feed: aByteArrayOrString [
 	"Feed raw PTY output bytes into the emulator, then flush pending damage
 	 so the screen grid reflects the new state."
 	| bytes |
+	self isDead ifTrue: [ ^ 0 ].
 	bytes := aByteArrayOrString isString
 		ifTrue: [
 			"Raw PTY output is already UTF-8 bytes (a ByteString): pass through
@@ -115,11 +160,14 @@ SWATerm >> feed: aByteArrayOrString [
 
 {
 	#category : #'initialize-release',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:42'
 }
 SWATerm >> free [
 	"Release the libvterm instance. Screen/state are owned by vt and freed with it."
-	vt ifNotNil: [ lib vterm_free: vt. vt := nil. screen := nil. state := nil ]
+	"If the terminal is dead (nil or snapshot-nulled handles) do NOT call
+	 vterm_free: -- freeing a null/dangling pointer segfaults. Just drop refs."
+	self isDead ifTrue: [ vt := nil. screen := nil. state := nil. ^ self ].
+	lib vterm_free: vt. vt := nil. screen := nil. state := nil
 ]
 
 {
@@ -138,6 +186,21 @@ SWATerm >> initRows: r cols: c [
 ]
 
 {
+	#category : #testing,
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:28'
+}
+SWATerm >> isDead [
+	"True when the libvterm handles are unusable: either wiped to nil, or the VM
+	 nulled the ExternalAddress across a snapshot (isNull). Every FFI method that
+	 dereferences vt/screen/state must bail when this is true, otherwise libvterm
+	 segfaults on a freshly loaded image."
+	(vt isNil or: [ screen isNil or: [ state isNil ] ]) ifTrue: [ ^ true ].
+	^ vt getHandle isNull
+		or: [ screen getHandle isNull
+		or: [ state getHandle isNull ] ]
+]
+
+{
 	#category : #'input-keys',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
 }
@@ -146,20 +209,22 @@ SWATerm >> keyBackspace [	^ 3
 
 {
 	#category : #input,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
 SWATerm >> keyChar: aCharacter mod: modifiers [
 	"Send a printable character keystroke. Bytes accumulate in the output buffer;
 	 caller then #drainOutput to forward to the PTY."
+	self isDead ifTrue: [ ^ self ].
 	lib vterm: vt keyboardUnichar: aCharacter asInteger mod: modifiers
 ]
 
 {
 	#category : #input,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
 SWATerm >> keyCode: vtermKey mod: modifiers [
 	"Send a special key (a VTermKey enum value; see #keyEnter etc.)."
+	self isDead ifTrue: [ ^ self ].
 	lib vterm: vt keyboardKey: vtermKey mod: modifiers
 ]
 
@@ -214,11 +279,12 @@ SWATerm >> keyUp [	^ 5
 
 {
 	#category : #emulation,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
 SWATerm >> resizeRows: r cols: c [
 	rows := r.
 	cols := c.
+	self isDead ifTrue: [ ^ self ].
 	lib vterm_set_size: vt rows: r cols: c.
 	lib vterm_screen_flush_damage: screen.
 ]

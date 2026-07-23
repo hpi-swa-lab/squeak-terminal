@@ -656,11 +656,15 @@ SWATermMorph >> pty [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 13:07'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
 SWATermMorph >> pumpOnce [
 	"One iteration of the pump: drain PTY -> emulator, and emulator replies -> PTY."
 	| input reply |
+	(terminal isNil or: [ terminal isDead ]) ifTrue: [
+		"dead after image load: stop the pump WITHOUT touching stale fd/pid via FFI"
+		pumpProcess ifNotNil: [ pumpProcess terminate. pumpProcess := nil ].
+		^ self ].
 	pty ifNil: [ ^ self ].
 	input := pty readAvailable.
 	input isNil ifTrue: [ ^ self shellEnded ].	"EOF: child exited"

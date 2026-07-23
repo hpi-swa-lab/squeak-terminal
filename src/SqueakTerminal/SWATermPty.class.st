@@ -40,6 +40,28 @@ SWATermPty class >> command: cmdString args: argArray [
 ]
 
 {
+	#category : #'class initialization',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:50'
+}
+SWATermPty class >> initialize [
+	" self initialize "
+
+	Smalltalk addToStartUpList: self.
+]
+
+{
+	#category : #'system startup',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:50'
+}
+SWATermPty class >> startUp: resuming [
+	"resuming = true: image loaded fresh from disk. Every PTY's fd/pid/buffers
+	 belong to the dead previous process -- mark them dead so close won't touch
+	 a stale fd or kill a reused pid. resuming = false: same process, leave alone."
+	resuming ifFalse: [ ^ self ].
+	self allInstancesDo: [ :p | p beDead ]
+]
+
+{
 	#category : #private,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:52'
 }
@@ -51,6 +73,21 @@ SWATermPty >> allocCString: aString [
 	1 to: bytes size do: [ :i | addr unsignedByteAt: i put: (bytes at: i) ].
 	addr unsignedByteAt: bytes size + 1 put: 0.
 	^ addr
+]
+
+{
+	#category : #'initialize-release',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:50'
+}
+SWATermPty >> beDead [
+	"Mark this PTY dead, idempotently. After an image load the fd/pid belong to
+	 the previous process (the OS may have reused the pid) and the C buffers are
+	 dangling. Reset fd/pid to -1 so close won't close:/kill: a stale/reused
+	 target, and drop the buffer refs WITHOUT freeing (the pointers are dead)."
+	masterFd := -1.
+	childPid := -1.
+	argvBuf := nil.
+	cstrings := nil
 ]
 
 {
@@ -98,11 +135,14 @@ SWATermPty >> close [
 
 {
 	#category : #private,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:53'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:48'
 }
 SWATermPty >> freeBuffers [
-	cstrings ifNotNil: [ cstrings do: [ :a | a free ]. cstrings := nil ].
-	argvBuf ifNotNil: [ argvBuf free. argvBuf := nil ].
+	"After a snapshot these ExternalAddresses are null/dead: freeing them fails.
+	 Only free a still-valid (non-null) address; otherwise just drop the ref."
+	cstrings ifNotNil: [ cstrings do: [ :a | (a notNil and: [ a isNull not ]) ifTrue: [ a free ] ]. cstrings := nil ].
+	(argvBuf notNil and: [ argvBuf isNull not ]) ifTrue: [ argvBuf free ].
+	argvBuf := nil.
 ]
 
 {
