@@ -28,6 +28,16 @@ Class {
 }
 
 {
+	#category : #'class initialization',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:18'
+}
+SWATerm class >> initialize [
+	" self initialize "
+
+	Smalltalk addToStartUpList: self.
+]
+
+{
 	#category : #'instance creation',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:47'
 }
@@ -36,12 +46,27 @@ SWATerm class >> rows: r cols: c [
 ]
 
 {
+	#category : #'system startup',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:16'
+}
+SWATerm class >> startUp: resuming [
+	"After every image load, every persisted SWATerm holds dangling libvterm
+	 pointers from the previous process. Wipe them so nothing dereferences
+	 freed C memory (was: segfault in vterm_screen_get_cell during drawOn:).
+	 We snapshot continuously while running, so this MUST happen on startUp:
+	 -- there is no pre-snapshot/shutDown opportunity to clean up first."
+	resuming ifFalse: [ ^ self ].
+	self allInstancesDo: [ :t | t markStale ]
+]
+
+{
 	#category : #emulation,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:35'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:17'
 }
 SWATerm >> cellAt: row at: col [
 	"Return a fresh SWATermCell for the given 0-based row/col, or nil if out of range."
 	| pos cell |
+	self isStale ifTrue: [ ^ nil ].	"handles dangling after image load"
 	(row between: 0 and: rows - 1) ifFalse: [ ^ nil ].
 	(col between: 0 and: cols - 1) ifFalse: [ ^ nil ].
 	pos := SWATermPos new.
@@ -138,6 +163,16 @@ SWATerm >> initRows: r cols: c [
 ]
 
 {
+	#category : #testing,
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:16'
+}
+SWATerm >> isStale [
+	"True when the libvterm handles are missing (never initialised, freed, or
+	 wiped after an image load). A stale terminal must not be used for FFI."
+	^ vt isNil or: [ screen isNil or: [ state isNil ] ]
+]
+
+{
 	#category : #'input-keys',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
 }
@@ -210,6 +245,20 @@ SWATerm >> keyTab [	^ 2
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
 }
 SWATerm >> keyUp [	^ 5
+]
+
+{
+	#category : #'initialize-release',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:16'
+}
+SWATerm >> markStale [
+	"Called after image load. The C-space handles (vt/screen/state) point into
+	 the previous process and are now garbage. Do NOT vterm_free: them -- the
+	 pointer is dangling and freeing would segfault. Just drop the references so
+	 the terminal is inert (isStale answers true, drawing short-circuits)."
+	vt := nil.
+	screen := nil.
+	state := nil
 ]
 
 {

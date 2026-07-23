@@ -268,7 +268,7 @@ SWATermMorph >> drawCursorOn: aCanvas origin: origin [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:49'
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:17'
 }
 SWATermMorph >> drawOn: aCanvas [
 	"Draw the full terminal grid: background rectangle, then each cell's
@@ -276,6 +276,7 @@ SWATermMorph >> drawOn: aCanvas [
 	| origin |
 	origin := self topLeft.
 	aCanvas fillRectangle: self bounds color: defaultBg.
+	(terminal isNil or: [ terminal isStale ]) ifTrue: [ ^ self ].	"inert after image load; never touch stale FFI handles"
 	0 to: terminal rows - 1 do: [ :row |
 		0 to: terminal cols - 1 do: [ :col |
 			self drawCell: (terminal cellAt: row at: col)

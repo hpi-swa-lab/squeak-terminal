@@ -40,6 +40,28 @@ SWATermPty class >> command: cmdString args: argArray [
 ]
 
 {
+	#category : #'class initialization',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:18'
+}
+SWATermPty class >> initialize [
+	" self initialize "
+
+	Smalltalk addToStartUpList: self.
+]
+
+{
+	#category : #'system startup',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:16'
+}
+SWATermPty class >> startUp: resuming [
+	"After image load the child shell process is gone and any C buffers
+	 (argvBuf/cstrings) are dangling ExternalAddresses. Mark every persisted
+	 pty dead so nothing tries to read/write a stale fd or free stale memory."
+	resuming ifFalse: [ ^ self ].
+	self allInstancesDo: [ :p | p markStale ]
+]
+
+{
 	#category : #private,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:52'
 }
@@ -116,6 +138,20 @@ SWATermPty >> isRunning [
 	status := ByteArray new: 4.
 	r := lib waitpid: childPid status: status options: 1.	"WNOHANG"
 	^ r = 0
+]
+
+{
+	#category : #'initialize-release',
+	#'squeak_changestamp' : 'MCPServer 7/23/2026 17:17'
+}
+SWATermPty >> markStale [
+	"Called after image load. The child process is dead and the C buffers are
+	 dangling. Drop the fd/pid and buffer references WITHOUT touching FFI --
+	 do not close: a stale fd or free: a dangling pointer."
+	masterFd := -1.
+	childPid := -1.
+	argvBuf := nil.
+	cstrings := nil
 ]
 
 {
