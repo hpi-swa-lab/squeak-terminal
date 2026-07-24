@@ -84,11 +84,14 @@ SWATermMorph class >> fontDirectory [
 
 {
 	#category : #'class initialization',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:07'
+	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:46'
 }
 SWATermMorph class >> initialize [
 	"Register the 'Terminal' entry in the world's Apps menu. Idempotent:
 	 removes any prior entry for this receiver first."
+	"Revive open terminals after a snapshot: re-run their remembered shell
+	 instead of leaving them dead. Runs after SWATerm/SWATermPty in the list."
+	Smalltalk addToStartUpList: self.
 	(TheWorldMenu respondsTo: #registerOpenCommand:) ifFalse: [ ^ self ].
 	TheWorldMenu unregisterOpenCommandWithReceiver: self.
 	TheWorldMenu registerOpenCommand: {
@@ -107,6 +110,23 @@ SWATermMorph class >> open [
 	m openInWindow.
 	m startShell.
 	^ m
+]
+
+{
+	#category : #'class initialization',
+	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:46'
+}
+SWATermMorph class >> startUp: resuming [
+	"On a fresh image load (resuming = true) every terminal morph's libvterm
+	 handles and PTY are dead (SWATerm/SWATermPty startUp: already ran beDead on
+	 them -- they precede us in the startUp list). Rather than leave dead
+	 terminals on screen, revive each one: rebuild the emulator and re-run the
+	 shell/command it remembered. resuming = false is a same-process continue --
+	 the live terminals are fine, leave them alone."
+	resuming ifFalse: [ ^ self ].
+	self allInstancesDo: [ :m |
+		[ m reviveAfterSnapshot ] on: Error do: [ :e |
+			Transcript showln: 'SWATermMorph revive failed: ', e messageText ] ]
 ]
 
 {
@@ -686,6 +706,33 @@ SWATermMorph >> pumpOnce [
 SWATermMorph >> restartShell [
 	"Stop any running shell and start a fresh bash."
 	self startShell
+]
+
+{
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:45'
+}
+SWATermMorph >> reviveAfterSnapshot [
+	"Called on image startUp (fresh load): the previous process's libvterm
+	 handles and PTY are dead (beDead nulled them), so instead of leaving the
+	 terminal a corpse, rebuild it and re-run the shell/command it remembered.
+
+	 Order matters:
+	  1. terminal reinit -- fresh libvterm emulator at the same grid, so isDead
+	     becomes false and drawing/feeding work again.
+	  2. pty respawn -- re-fork the remembered command (default bash if none),
+	     resized to the current grid.
+	  3. startPump -- resume the read/feed/write loop.
+	 Idempotent-ish: safe to call on a terminal whose window was already closed
+	 (terminal nil -> nothing to do)."
+	terminal ifNil: [ ^ self ].
+	terminal reinit.
+	pty
+		ifNil: [ self startShell ]
+		ifNotNil: [
+			pty respawn: terminal rows cols: terminal cols.
+			self startPump ].
+	self changed
 ]
 
 {

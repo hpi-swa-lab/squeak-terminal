@@ -199,6 +199,25 @@ SWATermPty >> resizeRows: rows cols: cols [
 ]
 
 {
+	#category : #spawning,
+	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:45'
+}
+SWATermPty >> respawn: rows cols: cols [
+	"Re-fork the remembered command/argv after a snapshot (beDead left them
+	 intact but reset fd/pid to -1 and dropped the C buffers). Rebuilds the C
+	 argv and forkpty's a fresh child sized to the given grid. Answers the new
+	 pid, or nil if there is nothing to respawn (no command remembered)."
+	command ifNil: [ ^ nil ].
+	lib := SWATermLibc default.
+	argv ifNil: [ argv := (Array with: command) ].
+	masterFd := -1.
+	childPid := -1.
+	argvBuf := nil.
+	cstrings := nil.
+	^ self spawnRows: rows cols: cols
+]
+
+{
 	#category : #'initialize-release',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:34'
 }

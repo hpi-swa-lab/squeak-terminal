@@ -278,6 +278,19 @@ SWATerm >> keyUp [	^ 5
 ]
 
 {
+	#category : #'initialize-release',
+	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:45'
+}
+SWATerm >> reinit [
+	"Rebuild the libvterm emulator from scratch after a snapshot wiped the
+	 handles (see beDead). Keeps the remembered grid size (rows/cols). Does NOT
+	 free the old vt/screen/state -- they are dangling pointers from the dead
+	 previous process (already nulled by beDead); we simply install fresh ones.
+	 After this isDead answers false and the terminal is usable again."
+	self initRows: (rows ifNil: [ 24 ]) cols: (cols ifNil: [ 80 ])
+]
+
+{
 	#category : #emulation,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
