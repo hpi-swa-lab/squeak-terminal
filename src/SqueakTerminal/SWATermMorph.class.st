@@ -22,6 +22,58 @@ Class {
 }
 
 {
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:51'
+}
+SWATermMorph class >> availableFontFamilies [
+	"Sorted names of TrueType (TTCFont) families currently loaded in the image.
+	 These are the fixed-width-capable families the chooser offers. Names are the
+	 registered TextStyle keys (spaces stripped), accepted by TTCFont familyName:."
+	^ (TextStyle actualTextStyles associations
+		select: [ :a |
+			a value fontArray notNil
+				and: [ a value fontArray notEmpty ]
+				and: [ (a value fontArray first class name beginsWith: 'TTC') ] ]
+		thenCollect: [ :a | a key asString ])
+		asSortedCollection asArray
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:33'
+}
+SWATermMorph class >> checkFontOnInstall [
+	"Run at package-install time (from #initialize). Do NOT block the load with a
+	 modal dialog or a 26 MB download here -- headless loads must succeed. Just
+	 report status. The actual download-if-missing (with a user confirm) happens
+	 lazily the first time a terminal is opened, via #defaultFont."
+	| dir |
+	(TextStyle named: self fontFamilyName) ifNotNil: [ ^ self ].
+	dir := self fontDirectory.
+	(self fontFileNames allSatisfy: [ :f | dir fileExists: f ])
+		ifTrue: [ self logLine: 'faces present, will install on first terminal open' ]
+		ifFalse: [ self logLine: 'font "', self fontFamilyName,
+			'" not installed; you will be asked to download it when you open a terminal' ]
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:50'
+}
+SWATermMorph class >> confirmAndDownloadFontInto: dir [
+	"The terminal font faces are missing. Ask the user for permission to download
+	 them from the Nerd Fonts GitHub release, then fetch + extract.
+	 Answer true on success, false if the user declines or it fails."
+	(self confirm: ('The terminal font "{1}" is not installed.
+Download it now from the Nerd Fonts release?
+({2})' format: { self fontFamilyName. self fontDownloadUrl }))
+		ifFalse: [ self logLine: 'download declined by user'. ^ false ].
+	^ [ self downloadAndExtractFontInto: dir ]
+		on: Error
+		do: [ :e | self logLine: 'download failed: ', e messageText. false ]
+]
+
+{
 	#category : #preferences,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:35'
 }
@@ -42,33 +94,83 @@ SWATermMorph class >> debugEvents: aBoolean [
 
 {
 	#category : #fonts,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:10'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:10'
 }
 SWATermMorph class >> defaultFont [
-	"The preferred terminal font: bundled DejaVu Sans Mono (full box-drawing/block
-	 glyph coverage), falling back to the system fixed font if it can't be installed."
+	"The preferred terminal font: Cascadia Mono Nerd Font (braille spinners,
+	 box-drawing/block progress bars, Nerd icons/powerline), downloaded on first
+	 use if absent. Falls back to the system fixed font if it can't be installed."
 	| name |
 	name := self ensureDefaultFontInstalled.
 	name ifNil: [ ^ TextStyle defaultFixedFont ].
-	^ TTCFont familyName: name pointSize: 11
+	^ TTCFont familyName: name pointSize: self defaultFontSize
 ]
 
 {
 	#category : #fonts,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:10'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:10'
+}
+SWATermMorph class >> defaultFontSize [
+	"Point size a new terminal opens at (and the target of Ctrl+0 / reset font)."
+	^ 14
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:32'
+}
+SWATermMorph class >> downloadAndExtractFontInto: dir [
+	"Download the Nerd Font release zip with curl and extract just the faces in
+	 #fontFileNames into dir. Answer true if all wanted faces end up present.
+	 Uses curl (handles the GitHub release redirect + HTTPS) rather than the
+	 image's HTTP stack. Raises on hard failure; caller decides how to report."
+	| zipPath want archive |
+	dir assureExistence.
+	zipPath := (dir fullNameFor: 'nerdfont-download.zip').
+	self logLine: 'Downloading ', self fontDownloadUrl, ' ...'.
+	UnixProcess waitForCommand:
+		'curl -fsSL ', self fontDownloadUrl, ' -o ', zipPath.
+	(FileDirectory default fileExists: zipPath) ifFalse: [
+		^ self error: 'curl produced no file' ].
+	want := self fontFileNames asSet.
+	archive := ZipArchive new readFrom: zipPath.
+	[ archive members do: [ :m |
+		| base |
+		base := m fileName copyAfterLast: $/.
+		base isEmpty ifTrue: [ base := m fileName ].
+		(want includes: base) ifTrue: [
+			| out |
+			out := dir fullNameFor: base.
+			self logLine: 'Extracting ', base.
+			(FileStream forceNewFileNamed: out) binary
+				nextPutAll: m contents; close ] ]
+	] ensure: [ archive close ].
+	FileDirectory default deleteFileNamed: zipPath ifAbsent: [].
+	^ self fontFileNames allSatisfy: [ :n | dir fileExists: n ]
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:32'
 }
 SWATermMorph class >> ensureDefaultFontInstalled [
-	"Install the bundled DejaVu Sans Mono if not already present. Idempotent.
-	 Returns the family name on success, or nil if the file is missing/unreadable."
-	| name |
-	name := 'DejaVuSansMono'.
+	"Make the terminal font (#fontFamilyName) available, downloading it first if
+	 the .ttf files are missing. Idempotent. Returns the family name on success,
+	 or nil so #defaultFont can fall back to the system fixed font.
+
+	 1. Already installed in the image?      -> done.
+	 2. Face files present in fontDirectory? -> install them.
+	 3. Missing?                             -> ask the user, download, install."
+	| name dir |
+	name := self fontFamilyName.
 	(TextStyle named: name) ifNotNil: [ ^ name ].
-	^ [ | dir files |
-		dir := self fontDirectory.
-		files := (dir fileNamesMatching: '*.ttf') collect: [ :f | dir fullNameFor: f ].
-		files isEmpty ifTrue: [ nil ]
-			ifFalse: [ (TTCFont installFromFileNames: files) ifEmpty: [ nil ] ifNotEmpty: [ name ] ]
-	] on: Error do: [ :e | nil ]
+	dir := self fontDirectory.
+	^ [
+		(self fontFileNames allSatisfy: [ :f | dir fileExists: f ])
+			ifFalse: [ (self confirmAndDownloadFontInto: dir) ifFalse: [ ^ nil ] ].
+		self installFontFilesFrom: dir
+	] on: Error do: [ :e |
+		self logLine: 'install failed: ', e messageText. nil ]
 ]
 
 {
@@ -83,8 +185,40 @@ SWATermMorph class >> fontDirectory [
 ]
 
 {
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:50'
+}
+SWATermMorph class >> fontDownloadUrl [
+	"The Nerd Fonts release zip that contains our faces. Latest release."
+	^ 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/CascadiaMono.zip'
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:50'
+}
+SWATermMorph class >> fontFamilyName [
+	"The family name libvterm cells are rendered with. Cascadia Mono (the
+	 Windows Terminal font, Nerd-Font-patched) has full braille (spinners),
+	 block/box-drawing (progress bars) and Nerd icon/powerline glyphs, with a
+	 comfortable width -- the combination DejaVu Sans Mono lacked.
+	 Note: this is the name Squeak registers the TTF under (spaces stripped),
+	 which is what TTCFont familyName: and TextStyle named: expect."
+	^ 'CaskaydiaMonoNFM'
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:50'
+}
+SWATermMorph class >> fontFileNames [
+	"The .ttf faces we need present in fontDirectory (Regular + Bold)."
+	^ #('CaskaydiaMonoNerdFontMono-Regular.ttf' 'CaskaydiaMonoNerdFontMono-Bold.ttf')
+]
+
+{
 	#category : #'class initialization',
-	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:46'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:33'
 }
 SWATermMorph class >> initialize [
 	"Register the 'Terminal' entry in the world's Apps menu. Idempotent:
@@ -92,11 +226,38 @@ SWATermMorph class >> initialize [
 	"Revive open terminals after a snapshot: re-run their remembered shell
 	 instead of leaving them dead. Runs after SWATerm/SWATermPty in the list."
 	Smalltalk addToStartUpList: self.
+	self checkFontOnInstall.
 	(TheWorldMenu respondsTo: #registerOpenCommand:) ifFalse: [ ^ self ].
 	TheWorldMenu unregisterOpenCommandWithReceiver: self.
 	TheWorldMenu registerOpenCommand: {
 		'Terminal'.
 		{ self. #open } }
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:32'
+}
+SWATermMorph class >> installFontFilesFrom: dir [
+	"Install our #fontFileNames from dir into the image as TTCFonts.
+	 Answer the family name, or nil if nothing installed."
+	| files |
+	files := self fontFileNames
+		select: [ :f | dir fileExists: f ]
+		thenCollect: [ :f | dir fullNameFor: f ].
+	files isEmpty ifTrue: [ ^ nil ].
+	^ (TTCFont installFromFileNames: files)
+		ifEmpty: [ nil ]
+		ifNotEmpty: [ self fontFamilyName ]
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:32'
+}
+SWATermMorph class >> logLine: aString [
+	"Progress line to the Transcript during font install/download."
+	Transcript showln: 'SWATerm font: ', aString
 ]
 
 {
@@ -146,7 +307,7 @@ SWATermMorph >> addModelItemsToWindowMenu: aMenu [
 
 {
 	#category : #menu,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:56'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:51'
 }
 SWATermMorph >> addTerminalItemsToMenu: aMenu [
 	"Shared copy/paste/select items used by both the right-click menu and the
@@ -156,6 +317,11 @@ SWATermMorph >> addTerminalItemsToMenu: aMenu [
 	aMenu addLine.
 	aMenu add: 'select all' translated target: self selector: #selectAll.
 	aMenu add: 'clear selection' translated target: self selector: #clearSelection.
+	aMenu addLine.
+	aMenu add: 'choose font...' translated target: self selector: #chooseFont.
+	aMenu add: 'grow font (Ctrl+)' translated target: self selector: #growFont.
+	aMenu add: 'shrink font (Ctrl-)' translated target: self selector: #shrinkFont.
+	aMenu add: 'reset font (Ctrl0)' translated target: self selector: #resetFont.
 	"disable copy when nothing is selected"
 	self hasSelection ifFalse: [
 		(aMenu items detect: [ :it | it contents asString = 'copy' ] ifNone: [ nil ])
@@ -175,6 +341,50 @@ SWATermMorph >> cellAtPoint: aPoint [
 	col := col min: terminal cols - 1.
 	row := row min: terminal rows - 1.
 	^ col @ row
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:53'
+}
+SWATermMorph >> chooseFont [
+	"Pop up a font chooser: every TrueType family loaded in the image (the
+	 current one check-marked), plus -- when the preferred Cascadia Mono is not
+	 installed -- an entry to download it from the Nerd Fonts release."
+	| menu current |
+	menu := MenuMorph new.
+	menu addTitle: 'Terminal font'.
+	current := font familyName asString.
+	self class availableFontFamilies do: [ :fam |
+		| item |
+		item := MenuItemMorph new
+			target: self;
+			selector: #chooseFontFamily:;
+			arguments: { fam }.
+		item contents: ((fam = current ifTrue: [ '<yes>' ] ifFalse: [ '<no>' ]), fam)
+			withMarkers: true.
+		menu addMorphBack: item ].
+	(self class availableFontFamilies includes: self class fontFamilyName) ifFalse: [
+		menu addLine.
+		menu add: 'Download Cascadia Mono...' translated
+			target: self selector: #downloadAndUsePreferredFont ].
+	menu popUpInWorld: self world
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:51'
+}
+SWATermMorph >> chooseFontFamily: familyName [
+	"Switch this terminal to familyName, keeping the current point size. Warn (but
+	 still switch) if the family lacks braille/block glyphs the terminal relies on."
+	| newFont |
+	newFont := TTCFont familyName: familyName pointSize: font pointSize.
+	self font: newFont.
+	((newFont hasGlyphOf: (Character value: 16r280B))
+		and: [ newFont hasGlyphOf: (Character value: 16r2580) ])
+		ifFalse: [ self class logLine: familyName,
+			' lacks braille/block glyphs; spinners or progress bars may show as "?"' ]
 ]
 
 {
@@ -224,13 +434,31 @@ SWATermMorph >> debugEventsMenuLabel [
 
 {
 	#category : #'initialize-release',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:53'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:05'
 }
 SWATermMorph >> delete [
-	"Clean up the shell and libvterm when the morph is removed."
-	self stopShell.
-	terminal ifNotNil: [ terminal free. terminal := nil ].
+	"Note: SystemWindow>>collapseOrExpand sends #delete to pane morphs on
+	 *collapse* (minimize), not just on window close. So delete must NOT tear
+	 down the terminal/shell -- otherwise expanding the window redraws a morph
+	 whose terminal is nil (doesNotUnderstand: #rows). Real teardown happens in
+	 #windowIsClosing, which is only invoked on actual window close."
 	super delete.
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:51'
+}
+SWATermMorph >> downloadAndUsePreferredFont [
+	"Download (with confirm) + install the preferred Cascadia Mono font, then
+	 switch this terminal to it. No-op if the user declines or it fails."
+	| dir installed |
+	dir := self class fontDirectory.
+	(self class fontFileNames allSatisfy: [ :f | dir fileExists: f ])
+		ifFalse: [ (self class confirmAndDownloadFontInto: dir) ifFalse: [ ^ self ] ].
+	installed := self class installFontFilesFrom: dir.
+	installed ifNil: [ ^ self class logLine: 'install produced no font' ].
+	self chooseFontFamily: installed
 ]
 
 {
@@ -265,7 +493,7 @@ SWATermMorph >> drawCell: cell row: row col: col origin: origin on: aCanvas [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:49'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:13'
 }
 SWATermMorph >> drawCursorOn: aCanvas origin: origin [
 	"Draw a block cursor at the terminal cursor position."
@@ -276,19 +504,21 @@ SWATermMorph >> drawCursorOn: aCanvas origin: origin [
 	cursorBounds := (x @ y) extent: (cellWidth @ cellHeight).
 	self hasFocus
 		ifTrue: [
-			"Solid block, reverse the glyph under it."
-			aCanvas fillRectangle: cursorBounds color: defaultFg.
-			cell := terminal cellAt: pos y at: pos x.
-			(cell notNil and: [ cell character ~= $  ]) ifTrue: [
-				aCanvas drawString: (String with: cell character)
-					at: (x @ y) font: font color: defaultBg ] ]
+			"Blink: only draw the solid block on the 'on' phase. On the 'off'
+			 phase we draw nothing, leaving the cell that drawOn: already painted."
+			blinkState ifTrue: [
+				aCanvas fillRectangle: cursorBounds color: defaultFg.
+				cell := terminal cellAt: pos y at: pos x.
+				(cell notNil and: [ cell character ~= $  ]) ifTrue: [
+					aCanvas drawString: (String with: cell character)
+						at: (x @ y) font: font color: defaultBg ] ] ]
 		ifFalse: [
 			aCanvas frameRectangle: cursorBounds width: 1 color: defaultFg ].
 ]
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:49'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:05'
 }
 SWATermMorph >> drawOn: aCanvas [
 	"Draw the full terminal grid: background rectangle, then each cell's
@@ -296,6 +526,7 @@ SWATermMorph >> drawOn: aCanvas [
 	| origin |
 	origin := self topLeft.
 	aCanvas fillRectangle: self bounds color: defaultBg.
+	terminal ifNil: [ ^ self ].
 	0 to: terminal rows - 1 do: [ :row |
 		0 to: terminal cols - 1 do: [ :col |
 			self drawCell: (terminal cellAt: row at: col)
@@ -335,15 +566,18 @@ SWATermMorph >> font [
 
 {
 	#category : #accessing,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 13:31'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:01'
 }
 SWATermMorph >> font: aFont [
 	"Set the rendering font and recompute the cell metrics. The font should be
-	 fixed-width; cell size is taken from the width of $m and the font height."
+	 fixed-width; cell size is taken from the width of $m and the font height.
+	 Keep the character grid (rows x cols) constant across a size change: resize
+	 the enclosing window to fit the new cell size rather than reflowing the grid
+	 to the old pixel extent."
 	font := aFont.
 	cellWidth := font widthOf: $m.
 	cellHeight := font height.
-	self extent: self preferredExtent.
+	self resizeWindowToGrid.
 	self changed.
 ]
 
@@ -415,6 +649,30 @@ SWATermMorph >> handleClipboardShortcut: evt [
 			self copySelection.
 			self clearSelection.
 			^ true ] ].
+	^ false
+]
+
+{
+	#category : #'event handling',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:02'
+}
+SWATermMorph >> handleFontShortcut: evt [
+	"Intercept Ctrl++ / Ctrl+- (and Ctrl+0) to change the terminal font size,
+	 following the common convention used by browsers and terminals:
+	  - Ctrl++ (or Ctrl+=) grows the font.
+	  - Ctrl+- shrinks the font.
+	  - Ctrl+0 resets to the default size.
+	 Returns true if the event was consumed, false to continue normal processing.
+	 The '+' and '=' share a key; Squeak may deliver either depending on shift."
+	| code letter |
+	evt controlKeyPressed ifFalse: [ ^ false ].
+	code := evt keyCharacter asInteger.
+	letter := (code between: 1 and: 26)
+		ifTrue: [ Character value: code + 96 ]
+		ifFalse: [ evt keyCharacter ].
+	(letter = $+ or: [ letter = $= ]) ifTrue: [ self growFont. ^ true ].
+	letter = $- ifTrue: [ self shrinkFont. ^ true ].
+	letter = $0 ifTrue: [ self resetFont. ^ true ].
 	^ false
 ]
 
@@ -500,7 +758,7 @@ SWATermMorph >> isCellSelectedRow: row col: col [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:01'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:14'
 }
 SWATermMorph >> keyStroke: evt [
 	"Translate a Squeak keystroke into libvterm keyboard input, then forward the
@@ -509,6 +767,7 @@ SWATermMorph >> keyStroke: evt [
 	pty ifNil: [ ^ self ].
 	"Clipboard shortcuts take priority (Ctrl+V paste; Ctrl+C copy when selected)."
 	(self handleClipboardShortcut: evt) ifTrue: [ ^ evt wasHandled: true ].
+	(self handleFontShortcut: evt) ifTrue: [ ^ evt wasHandled: true ].
 	char := evt keyCharacter.
 	code := char asInteger.
 	mod := 0.
@@ -521,7 +780,7 @@ SWATermMorph >> keyStroke: evt [
 		ifTrue: [ mod := mod bitOr: 2 ].
 	evt controlKeyPressed ifTrue: [ mod := mod bitOr: 4 ].
 	self logEvent: [ 'keyStroke: ', evt keyString, ' code=', code printString, ' mod=', mod printString ].
-	special := self specialKeyFor: code.
+	special := (self navigationKeyFor: evt) ifNil: [ self specialKeyFor: code ].
 	special notNil
 		ifTrue: [ terminal keyCode: special mod: mod ]
 		ifFalse: [
@@ -536,11 +795,12 @@ SWATermMorph >> keyStroke: evt [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 13:06'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:13'
 }
 SWATermMorph >> keyboardFocusChange: aBoolean [
 	"Redraw so the cursor style (solid vs outline) updates."
 	self logEvent: [ 'keyboardFocusChange: ', aBoolean printString ].
+	blinkState := true.
 	self changed.
 ]
 
@@ -595,6 +855,28 @@ SWATermMorph >> mouseUp: evt [
 	selectionEnd := self cellAtPoint: evt position.
 	self hasSelection ifFalse: [ selectionStart := selectionEnd := nil ].
 	self changed.
+]
+
+{
+	#category : #'event handling',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:14'
+}
+SWATermMorph >> navigationKeyFor: evt [
+	"Map Home/End/PageUp/PageDown/Insert to VTermKey values. Squeak delivers
+	 these as low codes that collide with control characters (Home=1 == Ctrl+A,
+	 End=4 == Ctrl+D, pageUp=11 == Ctrl+K, pageDown=12 == Ctrl+L, insert=5 ==
+	 Ctrl+E), so only treat them as navigation keys when no control key is held --
+	 that way a genuine Ctrl+A etc. still passes through to the shell. Answer the
+	 VTermKey enum value, or nil if this is not a (bare) navigation key."
+	evt controlKeyPressed ifTrue: [ ^ nil ].
+	evt commandKeyPressed ifTrue: [ ^ nil ].
+	^ evt keyCharacter asInteger caseOf: {
+		[ 1 ] -> [ terminal keyHome ].
+		[ 4 ] -> [ terminal keyEnd ].
+		[ 11 ] -> [ terminal keyPageUp ].
+		[ 12 ] -> [ terminal keyPageDown ].
+		[ 5 ] -> [ terminal keyInsert ]
+	} otherwise: [ nil ]
 ]
 
 {
@@ -676,27 +958,60 @@ SWATermMorph >> pty [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:00'
 }
 SWATermMorph >> pumpOnce [
-	"One iteration of the pump: drain PTY -> emulator, and emulator replies -> PTY."
-	| input reply |
+	"One iteration of the pump: drain PTY -> emulator, and emulator replies -> PTY.
+	 Answer true if any data was moved this iteration (so the pump loop can keep
+	 going without sleeping while output is still flowing), false when idle."
+	| input reply moved |
 	(terminal isNil or: [ terminal isDead ]) ifTrue: [
 		"dead after image load: stop the pump WITHOUT touching stale fd/pid via FFI"
 		pumpProcess ifNotNil: [ pumpProcess terminate. pumpProcess := nil ].
-		^ self ].
-	pty ifNil: [ ^ self ].
+		^ false ].
+	pty ifNil: [ ^ false ].
 	input := pty readAvailable.
-	input isNil ifTrue: [ ^ self shellEnded ].	"EOF: child exited"
+	input isNil ifTrue: [ self shellEnded. ^ false ].	"EOF: child exited"
+	moved := false.
 	input isEmpty ifFalse: [
 		self logEvent: [ 'pty->emu ', input size printString, ' bytes: ',
 			(input asString copyReplaceAll: (String with: (Character value: 27)) with: '<ESC>') ].
 		terminal feed: input.
-		self changed ].
+		self changed.
+		moved := true ].
 	reply := terminal drainOutput.
 	reply isEmpty ifFalse: [
 		self logEvent: [ 'emu->pty ', reply size printString, ' bytes' ].
-		pty write: reply ].
+		pty write: reply.
+		moved := true ].
+	^ moved
+]
+
+{
+	#category : #fonts,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:02'
+}
+SWATermMorph >> resetFont [
+	"Restore the terminal font to the default point size."
+	self fontSize: self class defaultFont pointSize
+]
+
+{
+	#category : #geometry,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:01'
+}
+SWATermMorph >> resizeWindowToGrid [
+	"Resize the enclosing SystemWindow so the current grid (terminal cols x rows)
+	 fits exactly at the current cell size, keeping the character dimensions
+	 constant when the font size changes. Also refresh the collapse floor. If we
+	 are not in a window (bare morph), just size the morph to the grid."
+	| window |
+	terminal ifNil: [ ^ self ].
+	(cellWidth isNil or: [ cellHeight isNil ]) ifTrue: [ ^ self ].
+	window := self ownerThatIsA: SystemWindow.
+	window isNil ifTrue: [ ^ self extent: self preferredExtent ].
+	window minimumExtent: (20 * cellWidth) @ (4 * cellHeight + 24).
+	window extent: self preferredExtent + (window extent - window layoutBounds extent)
 ]
 
 {
@@ -808,11 +1123,15 @@ SWATermMorph >> shrinkFont [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:54'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:14'
 }
 SWATermMorph >> specialKeyFor: code [
 	"Map a Squeak key code to a VTermKey enum value, or nil if it is an ordinary char.
-	 Squeak: 28=left 29=right 30=up 31=down 8=bs 9=tab 13=cr 27=esc."
+	 Squeak: 28=left 29=right 30=up 31=down 8=bs 9=tab 13=cr 27=esc.
+	 Note: navigation keys whose codes collide with control characters (Home=1,
+	 End=4, pageUp=11, pageDown=12, insert=5) are NOT handled here -- they are
+	 resolved in #navigationKeyFor: which also inspects the modifier state, so a
+	 real Ctrl+A/Ctrl+D still reaches the shell."
 	code = 30 ifTrue: [ ^ terminal keyUp ].
 	code = 31 ifTrue: [ ^ terminal keyDown ].
 	code = 28 ifTrue: [ ^ terminal keyLeft ].
@@ -840,7 +1159,7 @@ SWATermMorph >> startCommand: cmd args: argArray [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:53'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:00'
 }
 SWATermMorph >> startPump [
 	"Background process: read PTY output -> feed emulator -> forward emulator
@@ -848,8 +1167,16 @@ SWATermMorph >> startPump [
 	pumpProcess ifNotNil: [ pumpProcess terminate. pumpProcess := nil ].
 	pumpProcess := [
 		[ pty notNil and: [ pty masterFd >= 0 ] ] whileTrue: [
-			self pumpOnce.
-			(Delay forMilliseconds: 16) wait ]
+			"pumpOnce answers true when it moved data. While output keeps flowing
+			 (e.g. `cat` of a big file) keep pumping with no sleep so the child
+			 never blocks on a full PTY buffer; only sleep 16ms once idle. Cap the
+			 burst and yield so a never-ending stream can't starve other processes."
+			| burst |
+			burst := 0.
+			[ self pumpOnce and: [ (burst := burst + 1) < 64 ] ] whileTrue: [ ].
+			burst = 0
+				ifTrue: [ (Delay forMilliseconds: 16) wait ]
+				ifFalse: [ Processor yield ] ]
 	] newProcess.
 	pumpProcess priority: Processor userBackgroundPriority.
 	pumpProcess resume.
@@ -862,6 +1189,30 @@ SWATermMorph >> startPump [
 SWATermMorph >> startShell [
 	"Spawn /bin/bash over a PTY and start the pump loop."
 	^ self startCommand: '/bin/bash' args: #('-i')
+]
+
+{
+	#category : #'stepping and presenter',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:12'
+}
+SWATermMorph >> step [
+	"Toggle the cursor blink state and redraw just the cursor cell."
+	| pos x y |
+	blinkState := blinkState not.
+	terminal ifNil: [ ^ self ].
+	pos := terminal cursorPos.
+	x := self left + (pos x * cellWidth).
+	y := self top + (pos y * cellHeight).
+	self invalidRect: ((x @ y) extent: (cellWidth @ cellHeight))
+]
+
+{
+	#category : #'stepping and presenter',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:12'
+}
+SWATermMorph >> stepTime [
+	"Cursor blink interval in milliseconds."
+	^ 500
 ]
 
 {
@@ -908,6 +1259,15 @@ SWATermMorph >> updateGridForExtent [
 	"Clamp any selection to the new bounds."
 	self clampSelection.
 	self changed.
+]
+
+{
+	#category : #'stepping and presenter',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:12'
+}
+SWATermMorph >> wantsSteps [
+	"Blink the cursor."
+	^ true
 ]
 
 {

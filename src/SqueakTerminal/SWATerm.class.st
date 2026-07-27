@@ -230,9 +230,23 @@ SWATerm >> keyCode: vtermKey mod: modifiers [
 
 {
 	#category : #'input-keys',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:13'
+}
+SWATerm >> keyDelete [	^ 10
+]
+
+{
+	#category : #'input-keys',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
 }
 SWATerm >> keyDown [	^ 6
+]
+
+{
+	#category : #'input-keys',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:13'
+}
+SWATerm >> keyEnd [	^ 12
 ]
 
 {
@@ -251,9 +265,37 @@ SWATerm >> keyEscape [	^ 4
 
 {
 	#category : #'input-keys',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:13'
+}
+SWATerm >> keyHome [	^ 11
+]
+
+{
+	#category : #'input-keys',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:13'
+}
+SWATerm >> keyInsert [	^ 9
+]
+
+{
+	#category : #'input-keys',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
 }
 SWATerm >> keyLeft [	^ 7
+]
+
+{
+	#category : #'input-keys',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:13'
+}
+SWATerm >> keyPageDown [	^ 14
+]
+
+{
+	#category : #'input-keys',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:13'
+}
+SWATerm >> keyPageUp [	^ 13
 ]
 
 {
