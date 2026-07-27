@@ -13,7 +13,10 @@ Class {
 		'blinkState',
 		'selectionStart',
 		'selectionEnd',
-		'selecting'
+		'selecting',
+		'rowHashes',
+		'lastCursorPos',
+		'rowScanBuffer'
 	],
 	#classVars : [
 		'DebugEvents'
@@ -518,17 +521,29 @@ SWATermMorph >> drawCursorOn: aCanvas origin: origin [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:05'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:19'
 }
 SWATermMorph >> drawOn: aCanvas [
-	"Draw the full terminal grid: background rectangle, then each cell's
-	 background and glyph, then the cursor."
-	| origin |
+	"Draw the terminal grid: background, then each cell's background and glyph,
+	 then the cursor. Only the rows/cols that intersect the canvas clip rectangle
+	 are painted, so a partial invalidation (e.g. a single row changing while you
+	 type) costs one row of work instead of the whole grid -- independent of the
+	 window size."
+	| origin clip firstRow lastRow firstCol lastCol |
 	origin := self topLeft.
-	aCanvas fillRectangle: self bounds color: defaultBg.
-	terminal ifNil: [ ^ self ].
-	0 to: terminal rows - 1 do: [ :row |
-		0 to: terminal cols - 1 do: [ :col |
+	terminal ifNil: [ aCanvas fillRectangle: self bounds color: defaultBg. ^ self ].
+	(cellWidth isNil or: [ cellHeight isNil or: [ cellWidth = 0 or: [ cellHeight = 0 ] ] ])
+		ifTrue: [ ^ self ].
+	"Restrict work to the damaged band."
+	clip := aCanvas clipRect intersect: self bounds.
+	clip area = 0 ifTrue: [ ^ self ].
+	aCanvas fillRectangle: clip color: defaultBg.
+	firstRow := ((clip top - origin y) // cellHeight max: 0).
+	lastRow := ((clip bottom - origin y - 1) // cellHeight min: terminal rows - 1).
+	firstCol := ((clip left - origin x) // cellWidth max: 0).
+	lastCol := ((clip right - origin x - 1) // cellWidth min: terminal cols - 1).
+	firstRow to: lastRow do: [ :row |
+		firstCol to: lastCol do: [ :col |
 			self drawCell: (terminal cellAt: row at: col)
 				row: row col: col
 				origin: origin on: aCanvas ] ].
@@ -548,12 +563,12 @@ SWATermMorph >> extent: aPoint [
 
 {
 	#category : #emulation,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:49'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:19'
 }
 SWATermMorph >> feed: bytesOrString [
 	"Feed emulator output and request a redraw."
 	terminal feed: bytesOrString.
-	self changed.
+	self terminalChanged.
 ]
 
 {
@@ -716,6 +731,28 @@ SWATermMorph >> hasFocus [
 SWATermMorph >> hasSelection [
 	^ selectionStart notNil and: [ selectionEnd notNil
 		and: [ selectionStart ~= selectionEnd ] ]
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:30'
+}
+SWATermMorph >> hashRow: row cols: cols [
+	"A cheap content signature for one row, used to detect which rows to repaint.
+	 Reads the whole row's codepoints in a SINGLE FFI call (vterm_screen_get_chars)
+	 into a reused scratch buffer, then folds the raw uint32 bytes into a hash --
+	 ~cols times fewer FFI calls than one get_cell per cell. Colour/attr-only
+	 changes are caught by the cursor-row repaint and by full repaints on scroll;
+	 glyph changes (the common typing case) always flip the hash."
+	| need n h |
+	need := cols * 4.
+	(rowScanBuffer isNil or: [ rowScanBuffer size < need ])
+		ifTrue: [ rowScanBuffer := ByteArray new: need ].
+	n := terminal rowCodepointsInto: rowScanBuffer row: row.
+	h := 16r811C9DC5.  "FNV-1a offset basis (32-bit)"
+	1 to: need do: [ :i |
+		h := (h bitXor: (rowScanBuffer at: i)) * 16r01000193 bitAnd: 16rFFFFFFFF ].
+	^ h
 ]
 
 {
@@ -958,7 +995,7 @@ SWATermMorph >> pty [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:00'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:20'
 }
 SWATermMorph >> pumpOnce [
 	"One iteration of the pump: drain PTY -> emulator, and emulator replies -> PTY.
@@ -977,7 +1014,7 @@ SWATermMorph >> pumpOnce [
 		self logEvent: [ 'pty->emu ', input size printString, ' bytes: ',
 			(input asString copyReplaceAll: (String with: (Character value: 27)) with: '<ESC>') ].
 		terminal feed: input.
-		self changed.
+		self terminalChanged.
 		moved := true ].
 	reply := terminal drainOutput.
 	reply isEmpty ifFalse: [
@@ -1231,6 +1268,46 @@ SWATermMorph >> stopShell [
 }
 SWATermMorph >> terminal [
 	^ terminal
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:19'
+}
+SWATermMorph >> terminalChanged [
+	"Invalidate only the rows whose content changed since the last frame, plus the
+	 old and new cursor rows. Keeps typing cost proportional to the number of
+	 changed rows (usually one) instead of the whole grid. Falls back to a full
+	 invalidate if the grid size changed (e.g. after a resize)."
+	| rows cols newHashes dirty origin cursor |
+	terminal ifNil: [ ^ self changed ].
+	(cellWidth isNil or: [ cellHeight isNil ]) ifTrue: [ ^ self changed ].
+	rows := terminal rows.
+	cols := terminal cols.
+	origin := self topLeft.
+	newHashes := Array new: rows.
+	dirty := OrderedCollection new.
+	(rowHashes isNil or: [ rowHashes size ~= rows ]) ifTrue: [
+		"first frame or size change: repaint everything, seed the shadow"
+		rowHashes := Array new: rows withAll: nil.
+		self changed ].
+	0 to: rows - 1 do: [ :row |
+		| h |
+		h := self hashRow: row cols: cols.
+		newHashes at: row + 1 put: h.
+		(rowHashes at: row + 1) = h ifFalse: [ dirty add: row ] ].
+	rowHashes := newHashes.
+	"Cursor row(s): the block cursor overlays a cell, so its old and new rows must
+	 repaint even if the underlying cells did not change."
+	cursor := terminal cursorPos.
+	lastCursorPos ifNotNil: [ dirty add: lastCursorPos y ].
+	dirty add: cursor y.
+	lastCursorPos := cursor.
+	"Invalidate each dirty row band."
+	dirty asSet do: [ :row |
+		(row between: 0 and: rows - 1) ifTrue: [
+			self invalidRect: ((origin x @ (origin y + (row * cellHeight)))
+				extent: (self width @ cellHeight)) ] ]
 ]
 
 {

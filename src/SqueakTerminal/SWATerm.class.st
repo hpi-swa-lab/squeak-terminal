@@ -346,6 +346,22 @@ SWATerm >> resizeRows: r cols: c [
 
 {
 	#category : #emulation,
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:29'
+}
+SWATerm >> rowCodepointsInto: aByteArray row: row [
+	"Read every cell's primary codepoint on 0-based row into aByteArray (which
+	 must hold cols * 4 bytes) as little-endian uint32s, in one FFI call. Answer
+	 the number of codepoints written. Much cheaper than one get_cell per cell."
+	| rect |
+	self isDead ifTrue: [ ^ 0 ].
+	(row between: 0 and: rows - 1) ifFalse: [ ^ 0 ].
+	rect := SWATermRect new.
+	rect startRow: row; endRow: row + 1; startCol: 0; endCol: cols.
+	^ lib vterm_screen: screen getChars: aByteArray len: cols rect: rect
+]
+
+{
+	#category : #emulation,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:48'
 }
 SWATerm >> rowString: row [
