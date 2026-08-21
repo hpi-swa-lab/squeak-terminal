@@ -24,9 +24,22 @@ Squeak Terminal runs on Linux.
 
 ## Installation
 
-1. Make sure `libvterm.so` is next to your image
-2. It also bind your C library exports `forkpty`/`openpty`  from glibc
-3. Install Squeak Terminal via Metacello
+Squeak Terminal is Linux-only and needs two native pieces at runtime, both
+found through the Squeak FFI:
+
+1. **libvterm** -- the terminal emulator. The Smalltalk side loads it by the bare
+   module name `vterm`, so a file called `libvterm.so` must be resolvable. Either:
+   - install the system package, e.g. on Debian/Ubuntu:
+     `sudo apt install libvterm0` (or `libvterm-dev`), **or**
+   - drop a `libvterm.so` **next to your image** (the VM searches the image
+     directory). A copy of `libvterm.so` (Debian libvterm0 0.1.4) is included with
+     the development image; you can reuse it.
+
+2. **libc with `forkpty` / `openpty`** -- used to spawn the shell. Modern glibc
+   (>= 2.34) includes these in `libc.so.6` itself, so nothing extra is needed on a
+   typical Linux system.
+
+Then load the Smalltalk code via Metacello:
 
 ```smalltalk
 Metacello new
@@ -34,6 +47,10 @@ Metacello new
     repository: 'github://hpi-swa-lab/squeak-terminal:main/src';
     load.
 ```
+
+The Metacello package contains **only the Smalltalk code** -- it does not install
+`libvterm.so`. If the library is missing, the first terminal you open will fail
+with an FFI error; install libvterm (above) and retry.
 
 To develop this package, use GitS.
 
