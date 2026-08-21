@@ -111,13 +111,19 @@ SWATermCell >> bold [
 
 {
 	#category : #decoding,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:43'
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:07'
 }
 SWATermCell >> character [
-	"The primary character as a Character; space when blank."
+	"The primary character as a Character; space when blank. Guard the raw
+	 uint32 from libvterm: only accept valid Unicode scalar values (0..10FFFF,
+	 excluding UTF-16 surrogates). Anything else -- an uninitialised/garbage cell,
+	 e.g. read during a resize -- would make Character value: fail, so render it
+	 as the replacement char rather than raising in the draw loop."
 	| cp |
 	cp := self ch0.
 	cp = 0 ifTrue: [ ^ $  ].
+	(cp < 0 or: [ cp > 16r10FFFF or: [ cp between: 16rD800 and: 16rDFFF ] ])
+		ifTrue: [ ^ Character value: 16rFFFD ].
 	^ Character value: cp
 ]
 

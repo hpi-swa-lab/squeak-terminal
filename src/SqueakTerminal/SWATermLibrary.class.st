@@ -138,6 +138,20 @@ SWATermLibrary >> vterm_screen: screen getCellAt: pos into: cell [
 
 {
 	#category : #'api-screen',
+	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:30'
+}
+SWATermLibrary >> vterm_screen: screen getChars: chars len: len rect: rect [
+	"size_t vterm_screen_get_chars(const VTermScreen *screen, uint32_t *chars,
+	 size_t len, const VTermRect rect)
+	 Reads the primary codepoints of every cell in rect into the chars buffer
+	 (one uint32 per cell, reading order). rect is passed BY VALUE. Answers the
+	 number of codepoints that would be written (may exceed len)."
+	<cdecl: size_t 'vterm_screen_get_chars' (void* char* size_t SWATermRect) module: 'vterm'>
+	^ self externalCallFailed
+]
+
+{
+	#category : #'api-screen',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:20'
 }
 SWATermLibrary >> vterm_screen_flush_damage: screen [
