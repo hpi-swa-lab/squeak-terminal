@@ -265,11 +265,14 @@ SWATermMorph class >> logLine: aString [
 
 {
 	#category : #'instance creation',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:34'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:27'
 }
 SWATermMorph class >> open [
-	"Open a terminal in a SystemWindow and start a bash shell."
+	"Open a terminal in a SystemWindow and start this platform's shell."
 	| m |
+	"Check before instantiating anything: SWATermMorph>>initialize already builds
+	 a SWATerm, which calls into libvterm."
+	SWATermLibrary ensureInstalled ifFalse: [ ^ nil ].
 	m := SWATermMorph new.
 	m openInWindow.
 	m startShell.

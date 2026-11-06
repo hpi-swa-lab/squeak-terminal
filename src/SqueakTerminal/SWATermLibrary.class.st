@@ -25,12 +25,155 @@ Class {
 }
 
 {
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> archiveMemberPath [
+	"Path of the DLL inside the MSYS2 package."
+	^ self isAarch64
+		ifTrue: [ 'clangarm64/bin/libvterm-0.dll' ]
+		ifFalse: [ 'mingw64/bin/libvterm-0.dll' ]
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:27'
+}
+SWATermLibrary class >> cleanUpScratch: archivePath extracted: extractedPath [
+	"Remove the download and the whole directory tree tar unpacked beside the
+	 image; only the installed copy should survive."
+	| dir top |
+	dir := FileDirectory default.
+	dir deleteFileNamed: archivePath ifAbsent: [ nil ].
+	dir deleteFileNamed: extractedPath ifAbsent: [ nil ].
+	top := (FileDirectory on: Smalltalk imagePath) / (self archiveMemberPath copyUpTo: $/).
+	top exists ifTrue: [ top recursiveDelete ]
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> confirmAndDownload [
+	"Ask before fetching anything from the network, as the font install does."
+	(self confirm: ('The terminal needs {1} ({2}), which is not installed next to the VM.
+Download it now from the MSYS2 mirror?
+({3})' format: { self libraryFileName.
+		self isAarch64 ifTrue: [ 'ARM64' ] ifFalse: [ 'x86-64' ].
+		self downloadUrl }))
+		ifFalse: [ self logLine: 'download declined by user'. ^ false ].
+	^ [ self downloadAndExtractTo: (self libraryDirectory fullNameFor: self libraryFileName) ]
+		on: Error
+		do: [ :e | self logLine: 'download failed: ', e messageText. false ]
+]
+
+{
 	#category : #accessing,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:39'
 }
 SWATermLibrary class >> default [
 	"Return the shared library instance."
 	^ Default ifNil: [ Default := self new ]
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> downloadAndExtractTo: destPath [
+	"Fetch the MSYS2 package and put just the DLL at destPath. curl and tar both
+	 ship with Windows 10/11, and that tar is bsdtar, which reads .zst; the image
+	 has no zstd of its own. Answer true when the file is there.
+	 Raises nothing itself: the caller decides how to report failure."
+	| scratch archive member extracted |
+	scratch := Smalltalk imagePath.
+	archive := scratch, '\libvterm-download.pkg.tar.zst'.
+	member := self archiveMemberPath.
+	extracted := scratch, '\', (member copyReplaceAll: '/' with: '\').
+	self logLine: 'downloading ', self downloadUrl.
+	OSProcess waitForCommand: 'cmd.exe /c curl.exe -fsSL "', self downloadUrl,
+		'" -o "', archive,
+		'" && tar.exe -xf "', archive, '" -C "', scratch, '" "', member,
+		'" && copy /y "', extracted, '" "', destPath, '"'.
+	self waitForFile: destPath.
+	self cleanUpScratch: archive extracted: extracted.
+	^ FileDirectory default fileExists: destPath
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> downloadUrl [
+	"MSYS2 ships libvterm for both Windows architectures; the repository differs
+	 per CPU."
+	^ self isAarch64
+		ifTrue: [ 'https://mirror.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libvterm-0.3.3-1-any.pkg.tar.zst' ]
+		ifFalse: [ 'https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-libvterm-0.3.3-1-any.pkg.tar.zst' ]
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> ensureInstalled [
+	"Make libvterm available before anything calls into it. Answer false when the
+	 terminal cannot run, so the caller can decline to open one: without the
+	 library even creating a SWATerm fails."
+	self isInstalled ifTrue: [ ^ true ].
+	Smalltalk platformName = 'Win32' ifFalse: [
+		self logLine: self libraryFileName, ' missing; install libvterm with the system package manager'.
+		^ false ].
+	^ self confirmAndDownload
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> isAarch64 [
+	"An x86_64 DLL cannot load into an ARM64 process, and the failure reads as
+	 'External module not found' -- the same message a missing file gives."
+	^ (Smalltalk getSystemAttribute: 1003) asLowercase includesSubstring: 'aarch64'
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> isInstalled [
+	^ self libraryDirectory fileExists: self libraryFileName
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> libraryDirectory [
+	"Where the VM looks the module up. Confirmed by asking Windows which file
+	 the running process actually loaded: the VM's own directory, not the
+	 image's."
+	^ FileDirectory on: Smalltalk vmPath
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> libraryFileName [
+	"The file the bare module name 'vterm' in the cdecls resolves to here."
+	^ Smalltalk platformName = 'Win32'
+		ifTrue: [ 'vterm.dll' ]
+		ifFalse: [ 'libvterm.so' ]
+]
+
+{
+	#category : #support,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> logLine: aString [
+	"Progress line to the Transcript during the library check/download."
+	Transcript showln: 'SWATerm library: ', aString
 ]
 
 {
@@ -41,6 +184,19 @@ SWATermLibrary class >> resetDefault [
 	"Drop the shared instance, which after an image load was built by the dead
 	 process. The next #default builds one against this process's modules."
 	Default := nil
+]
+
+{
+	#category : #installing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+}
+SWATermLibrary class >> waitForFile: aPath [
+	"OSProcess answers before the shell has necessarily finished writing, so give
+	 the download a bounded chance to appear rather than guessing a delay."
+	30 timesRepeat: [
+		(FileDirectory default fileExists: aPath) ifTrue: [ ^ true ].
+		(Delay forMilliseconds: 500) wait ].
+	^ false
 ]
 
 {
