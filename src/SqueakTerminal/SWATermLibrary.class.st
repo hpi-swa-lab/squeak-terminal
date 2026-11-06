@@ -114,7 +114,7 @@ SWATermLibrary class >> downloadUrl [
 
 {
 	#category : #installing,
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:26'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/6/2026 16:11'
 }
 SWATermLibrary class >> ensureInstalled [
 	"Make libvterm available before anything calls into it. Answer false when the
@@ -123,6 +123,9 @@ SWATermLibrary class >> ensureInstalled [
 	self isInstalled ifTrue: [ ^ true ].
 	Smalltalk platformName = 'Win32' ifFalse: [
 		self logLine: self libraryFileName, ' missing; install libvterm with the system package manager'.
+		^ false ].
+	(Smalltalk getSystemAttribute: 1003) = 'IX86' ifTrue: [
+		self logLine: self libraryFileName, ' missing; MSYS2 has no 32-bit x86 libvterm package to download'.
 		^ false ].
 	^ self confirmAndDownload
 ]
@@ -178,6 +181,14 @@ SWATermLibrary class >> logLine: aString [
 
 {
 	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/6/2026 16:11'
+}
+SWATermLibrary class >> moduleName [
+	^ 'vterm'
+]
+
+{
+	#category : #accessing,
 	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:16'
 }
 SWATermLibrary class >> resetDefault [
@@ -197,14 +208,6 @@ SWATermLibrary class >> waitForFile: aPath [
 		(FileDirectory default fileExists: aPath) ifTrue: [ ^ true ].
 		(Delay forMilliseconds: 500) wait ].
 	^ false
-]
-
-{
-	#category : #accessing,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:20'
-}
-SWATermLibrary >> unixModuleName [
-	^ 'vterm'
 ]
 
 {

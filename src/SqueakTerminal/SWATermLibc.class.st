@@ -32,6 +32,14 @@ SWATermLibc class >> default [
 
 {
 	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/6/2026 16:11'
+}
+SWATermLibc class >> moduleName [
+	^ 'libc.so.6'
+]
+
+{
+	#category : #accessing,
 	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:16'
 }
 SWATermLibc class >> resetDefault [
