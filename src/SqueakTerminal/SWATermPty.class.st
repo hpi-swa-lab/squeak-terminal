@@ -134,6 +134,14 @@ SWATermPty >> close [
 ]
 
 {
+	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+}
+SWATermPty >> command [
+	^ command
+]
+
+{
 	#category : #private,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:48'
 }

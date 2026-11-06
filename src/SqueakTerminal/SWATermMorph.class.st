@@ -278,19 +278,18 @@ SWATermMorph class >> open [
 
 {
 	#category : #'class initialization',
-	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:46'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
 }
 SWATermMorph class >> startUp: resuming [
-	"On a fresh image load (resuming = true) every terminal morph's libvterm
-	 handles and PTY are dead (SWATerm/SWATermPty startUp: already ran beDead on
-	 them -- they precede us in the startUp list). Rather than leave dead
-	 terminals on screen, revive each one: rebuild the emulator and re-run the
-	 shell/command it remembered. resuming = false is a same-process continue --
-	 the live terminals are fine, leave them alone."
+	"On a fresh image load (resuming = true) every terminal's libvterm handles and
+	 PTY belong to the dead process, so close the windows rather than rebuild
+	 them: calling libvterm this early crashed the VM in vterm_new, the external
+	 addresses not having been relinked yet. Open a new terminal by hand.
+	 resuming = false is a same-process continue -- live terminals are fine."
 	resuming ifFalse: [ ^ self ].
 	self allInstancesDo: [ :m |
-		[ m reviveAfterSnapshot ] on: Error do: [ :e |
-			Transcript showln: 'SWATermMorph revive failed: ', e messageText ] ]
+		[ m detachAfterSnapshot ] on: Error do: [ :e |
+			Transcript showln: 'SWATermMorph detach failed: ', e messageText ] ]
 ]
 
 {
@@ -436,6 +435,17 @@ SWATermMorph >> debugEventsMenuLabel [
 ]
 
 {
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:21'
+}
+SWATermMorph >> defaultShellCommand [
+	"Answer the interactive shell and its arguments for this platform."
+	^ Smalltalk platformName = 'Win32'
+		ifTrue: [ 'powershell.exe' -> #('-NoLogo') ]
+		ifFalse: [ '/bin/bash' -> #('-i') ]
+]
+
+{
 	#category : #'initialize-release',
 	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:05'
 }
@@ -446,6 +456,22 @@ SWATermMorph >> delete [
 	 whose terminal is nil (doesNotUnderstand: #rows). Real teardown happens in
 	 #windowIsClosing, which is only invoked on actual window close."
 	super delete.
+]
+
+{
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+}
+SWATermMorph >> detachAfterSnapshot [
+	"Give up the session after an image load, keeping the window exactly where it
+	 is. Touches no FFI: every libvterm and pseudo console pointer here belongs to
+	 the dead process, and on a freshly loaded image even vterm_new crashes the
+	 VM, the external addresses not having been relinked yet.
+	 The pty is kept, dead, because it remembers the command to reattach to."
+	pumpProcess ifNotNil: [ pumpProcess terminate. pumpProcess := nil ].
+	terminal := nil.
+	pty ifNotNil: [ pty beDead ].
+	self changed
 ]
 
 {
@@ -521,7 +547,21 @@ SWATermMorph >> drawCursorOn: aCanvas origin: origin [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:19'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+}
+SWATermMorph >> drawDetachedOn: aCanvas [
+	"Say that the session is gone and that a keystroke brings the command back.
+	 Drawn instead of the grid, which no longer exists."
+	aCanvas
+		drawString: '[session ended - press a key or click to run ', pty command, ' again]'
+		at: self topLeft + (cellWidth @ cellHeight)
+		font: font
+		color: defaultFg
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
 }
 SWATermMorph >> drawOn: aCanvas [
 	"Draw the terminal grid: background, then each cell's background and glyph,
@@ -531,7 +571,10 @@ SWATermMorph >> drawOn: aCanvas [
 	 window size."
 	| origin clip firstRow lastRow firstCol lastCol |
 	origin := self topLeft.
-	terminal ifNil: [ aCanvas fillRectangle: self bounds color: defaultBg. ^ self ].
+	self ensureThisProcess ifFalse: [
+		aCanvas fillRectangle: self bounds color: defaultBg.
+		self isDetached ifTrue: [ self drawDetachedOn: aCanvas ].
+		^ self ].
 	(cellWidth isNil or: [ cellHeight isNil or: [ cellWidth = 0 or: [ cellHeight = 0 ] ] ])
 		ifTrue: [ ^ self ].
 	"Restrict work to the damaged band."
@@ -548,6 +591,23 @@ SWATermMorph >> drawOn: aCanvas [
 				row: row col: col
 				origin: origin on: aCanvas ] ].
 	self drawCursorOn: aCanvas origin: origin.
+]
+
+{
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+}
+SWATermMorph >> ensureThisProcess [
+	"Answer whether this terminal belongs to the running VM, dropping its dead
+	 handles if it does not. Checked on every draw and pump iteration because the
+	 startUp: hooks cannot be trusted: they sit at the end of a 59-entry startup
+	 list and are skipped entirely if an earlier entry raises, and the saved
+	 ExternalAddresses come back non-null, so isDead alone answers false."
+	terminal ifNil: [ ^ false ].
+	terminal validateProcess ifTrue: [
+		self detachAfterSnapshot.
+		^ false ].
+	^ true
 ]
 
 {
@@ -794,14 +854,26 @@ SWATermMorph >> isCellSelectedRow: row col: col [
 ]
 
 {
+	#category : #testing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+}
+SWATermMorph >> isDetached [
+	"The window outlived its session: no emulator, but a pty that still knows
+	 which command it was running. Distinct from closed, where both are nil and
+	 the terminal must stay closed."
+	^ terminal isNil and: [ pty notNil ]
+]
+
+{
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:14'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
 }
 SWATermMorph >> keyStroke: evt [
 	"Translate a Squeak keystroke into libvterm keyboard input, then forward the
 	 encoded bytes to the PTY. VTermModifier: shift=1, alt=2, ctrl=4."
 	| char code mod special |
 	pty ifNil: [ ^ self ].
+	self isDetached ifTrue: [ ^ self reattach ].
 	"Clipboard shortcuts take priority (Ctrl+V paste; Ctrl+C copy when selected)."
 	(self handleClipboardShortcut: evt) ifTrue: [ ^ evt wasHandled: true ].
 	(self handleFontShortcut: evt) ifTrue: [ ^ evt wasHandled: true ].
@@ -854,13 +926,14 @@ SWATermMorph >> logEvent: aStringBlock [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:55'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
 }
 SWATermMorph >> mouseDown: evt [
 	"Grab keyboard focus so typing goes to the shell."
 	self logEvent: [ 'mouseDown: at ', evt position printString,
 		' yellow=', evt yellowButtonChanged printString ].
 	evt hand newKeyboardFocus: self.
+	self isDetached ifTrue: [ ^ self reattach ].
 	evt yellowButtonChanged
 		ifTrue: [ ^ self yellowButtonActivity: evt shiftPressed ].
 	"Left button: begin a text selection."
@@ -995,14 +1068,25 @@ SWATermMorph >> pty [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:20'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:21'
+}
+SWATermMorph >> ptyClass [
+	"Windows has no forkpty; there the shell runs under a pseudo console."
+	^ Smalltalk platformName = 'Win32'
+		ifTrue: [ SWATermConPty ]
+		ifFalse: [ SWATermPty ]
+]
+
+{
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:47'
 }
 SWATermMorph >> pumpOnce [
 	"One iteration of the pump: drain PTY -> emulator, and emulator replies -> PTY.
 	 Answer true if any data was moved this iteration (so the pump loop can keep
 	 going without sleeping while output is still flowing), false when idle."
 	| input reply moved |
-	(terminal isNil or: [ terminal isDead ]) ifTrue: [
+	self ensureThisProcess ifFalse: [
 		"dead after image load: stop the pump WITHOUT touching stale fd/pid via FFI"
 		pumpProcess ifNotNil: [ pumpProcess terminate. pumpProcess := nil ].
 		^ false ].
@@ -1022,6 +1106,41 @@ SWATermMorph >> pumpOnce [
 		pty write: reply.
 		moved := true ].
 	^ moved
+]
+
+{
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+}
+SWATermMorph >> reattach [
+	"Run the remembered command again in this window: a new emulator and a new
+	 shell, like reattaching to a multiplexer. The old session's contents are
+	 gone and are not recoverable."
+	self isDetached ifFalse: [ ^ self ].
+	self rebuildTerminal.
+	pty respawn: terminal rows cols: terminal cols.
+	self startPump.
+	self changed
+]
+
+{
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:17'
+}
+SWATermMorph >> rebuildTerminal [
+	"Give this morph a usable emulator at its current pixel size, whether the old
+	 one is gone (detached) or merely dead.
+	 Unbinds the external primitives and drops the cached library instances first:
+	 after an image load both were built by the dead process, and calling
+	 libvterm through them crashed the VM inside vterm_new."
+	Smalltalk unbindExternalPrimitives.
+	SWATermLibrary resetDefault.
+	SWATermKernel32 resetDefault.
+	terminal
+		ifNil: [ terminal := SWATerm
+			rows: ((self height // cellHeight) max: 1)
+			cols: ((self width // cellWidth) max: 1) ]
+		ifNotNil: [ terminal reinit ]
 ]
 
 {
@@ -1053,10 +1172,10 @@ SWATermMorph >> resizeWindowToGrid [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 13:11'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:53'
 }
 SWATermMorph >> restartShell [
-	"Stop any running shell and start a fresh bash."
+	"Stop any running shell and start a fresh one for this platform."
 	self startShell
 ]
 
@@ -1184,12 +1303,16 @@ SWATermMorph >> specialKeyFor: code [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:34'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
 }
 SWATermMorph >> startCommand: cmd args: argArray [
 	"Spawn a command over a PTY sized to the terminal grid and start pumping."
 	self stopShell.
-	pty := SWATermPty command: cmd args: argArray.
+	"The emulator is gone or dead after an image load; rebuild it or the new
+	 shell's output is fed to handles from the previous process and nothing
+	 renders."
+	(terminal isNil or: [ terminal isDead ]) ifTrue: [ self rebuildTerminal ].
+	pty := self ptyClass command: cmd args: argArray.
 	pty spawnRows: terminal rows cols: terminal cols.
 	self startPump.
 ]
@@ -1221,11 +1344,13 @@ SWATermMorph >> startPump [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:53'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:21'
 }
 SWATermMorph >> startShell [
-	"Spawn /bin/bash over a PTY and start the pump loop."
-	^ self startCommand: '/bin/bash' args: #('-i')
+	"Spawn the platform's interactive shell and start the pump loop."
+	| shell |
+	shell := self defaultShellCommand.
+	^ self startCommand: shell key args: shell value
 ]
 
 {
@@ -1254,12 +1379,19 @@ SWATermMorph >> stepTime [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:53'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:48'
 }
 SWATermMorph >> stopShell [
 	"Stop the pump and close the PTY."
 	pumpProcess ifNotNil: [ pumpProcess terminate. pumpProcess := nil ].
-	pty ifNotNil: [ pty close. pty := nil ].
+	pty ifNil: [ ^ self ].
+	"A pty from a previous VM process holds handles that are no longer ours;
+	 closing one calls ClosePseudoConsole on a dangling pointer. Drop it instead
+	 and leave the orphaned shell to the OS."
+	self ensureThisProcess
+		ifTrue: [ pty close ]
+		ifFalse: [ pty beDead ].
+	pty := nil.
 ]
 
 {

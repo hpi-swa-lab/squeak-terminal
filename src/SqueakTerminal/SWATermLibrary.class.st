@@ -35,6 +35,16 @@ SWATermLibrary class >> default [
 
 {
 	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:16'
+}
+SWATermLibrary class >> resetDefault [
+	"Drop the shared instance, which after an image load was built by the dead
+	 process. The next #default builds one against this process's modules."
+	Default := nil
+]
+
+{
+	#category : #accessing,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:20'
 }
 SWATermLibrary >> unixModuleName [

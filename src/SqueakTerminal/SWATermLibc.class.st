@@ -31,6 +31,16 @@ SWATermLibc class >> default [
 ]
 
 {
+	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:16'
+}
+SWATermLibc class >> resetDefault [
+	"Drop the shared instance, which after an image load was built by the dead
+	 process. The next #default builds one against this process's modules."
+	Default := nil
+]
+
+{
 	#category : #io,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:21'
 }
@@ -70,6 +80,16 @@ SWATermLibc >> forkpty: amasterPtr name: namePtr termios: termPtr winsize: winPt
 	 Returns child pid to parent, 0 to child, -1 on error.
 	 amasterPtr: a 4-byte ByteArray receiving the master fd (parent side)."
 	<cdecl: long 'forkpty' (int32_t* char* void* void*) module: 'libc.so.6'>
+	^ self externalCallFailed
+]
+
+{
+	#category : #process,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:46'
+}
+SWATermLibc >> getpid [
+	"pid_t getpid(void)"
+	<cdecl: int32_t 'getpid' () module: 'libc.so.6'>
 	^ self externalCallFailed
 ]
 

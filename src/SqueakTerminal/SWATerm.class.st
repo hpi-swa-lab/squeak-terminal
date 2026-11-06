@@ -16,16 +16,30 @@ Class {
 	#name : #SWATerm,
 	#superclass : #Object,
 	#instVars : [
+		'lib',
 		'vt',
 		'screen',
 		'state',
 		'rows',
 		'cols',
-		'lib'
+		'ownerPid'
 	],
 	#category : #SqueakTerminal,
 	#'squeak_changestamp' : '<historical>'
 }
+
+{
+	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:47'
+}
+SWATerm class >> currentProcessId [
+	"The OS process id of the running VM. A reloaded image is a new process, which
+	 is the only reliable way to tell a live handle from one saved by a dead one:
+	 the ExternalAddresses themselves come back non-null across a snapshot."
+	^ Smalltalk platformName = 'Win32'
+		ifTrue: [ SWATermKernel32 default getCurrentProcessId ]
+		ifFalse: [ SWATermLibc default getpid ]
+]
 
 {
 	#category : #'class initialization',
@@ -172,11 +186,12 @@ SWATerm >> free [
 
 {
 	#category : #'initialize-release',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:35'
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:47'
 }
 SWATerm >> initRows: r cols: c [
 	rows := r.
 	cols := c.
+	ownerPid := self class currentProcessId.
 	lib := SWATermLibrary default.
 	vt := lib vterm_new_rows: r cols: c.
 	lib vterm_set_utf8: vt enabled: 1.
@@ -377,4 +392,21 @@ SWATerm >> rowString: row [
 }
 SWATerm >> rows [
 	^ rows
+]
+
+{
+	#category : #testing,
+	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:47'
+}
+SWATerm >> validateProcess [
+	"Kill the handles if they were made by a previous VM process, and answer
+	 whether this terminal is now dead. Call once per draw or pump iteration,
+	 never per cell: it costs one FFI call.
+	 Do not rely on the startUp: hooks for this -- they sit at the end of a long
+	 startup list and never run if an earlier entry raises."
+	| pid |
+	pid := self class currentProcessId.
+	ownerPid ifNil: [ ownerPid := pid ].
+	ownerPid = pid ifFalse: [ self beDead ].
+	^ self isDead
 ]
