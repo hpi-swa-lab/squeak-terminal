@@ -16,7 +16,11 @@ Class {
 		'selecting',
 		'rowHashes',
 		'lastCursorPos',
-		'rowScanBuffer'
+		'rowScanBuffer',
+		'gridForm',
+		'gridValid',
+		'refreshPending',
+		'cursorChar'
 	],
 	#classVars : [
 		'DebugEvents'
@@ -407,11 +411,11 @@ SWATermMorph >> clampSelection [
 
 {
 	#category : #selection,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:55'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> clearSelection [
 	selectionStart := selectionEnd := nil.
-	self changed.
+	self gridChanged.
 ]
 
 {
@@ -463,7 +467,7 @@ SWATermMorph >> delete [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> detachAfterSnapshot [
 	"Give up the session after an image load, keeping the window exactly where it
@@ -474,7 +478,7 @@ SWATermMorph >> detachAfterSnapshot [
 	pumpProcess ifNotNil: [ pumpProcess terminate. pumpProcess := nil ].
 	terminal := nil.
 	pty ifNotNil: [ pty beDead ].
-	self changed
+	self gridChanged
 ]
 
 {
@@ -525,24 +529,21 @@ SWATermMorph >> drawCell: cell row: row col: col origin: origin on: aCanvas [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:13'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> drawCursorOn: aCanvas origin: origin [
-	"Draw a block cursor at the terminal cursor position."
-	| pos x y cursorBounds cell |
-	pos := terminal cursorPos.
-	x := origin x + (pos x * cellWidth).
-	y := origin y + (pos y * cellHeight).
+	| x y cursorBounds |
+	lastCursorPos ifNil: [ ^ self ].
+	x := origin x + (lastCursorPos x * cellWidth).
+	y := origin y + (lastCursorPos y * cellHeight).
 	cursorBounds := (x @ y) extent: (cellWidth @ cellHeight).
 	self hasFocus
 		ifTrue: [
-			"Blink: only draw the solid block on the 'on' phase. On the 'off'
-			 phase we draw nothing, leaving the cell that drawOn: already painted."
+			"Off phase of the blink: the cached cell shows through."
 			blinkState ifTrue: [
 				aCanvas fillRectangle: cursorBounds color: defaultFg.
-				cell := terminal cellAt: pos y at: pos x.
-				(cell notNil and: [ cell character ~= $  ]) ifTrue: [
-					aCanvas drawString: (String with: cell character)
+				(cursorChar notNil and: [ cursorChar ~= $  ]) ifTrue: [
+					aCanvas drawString: (String with: cursorChar)
 						at: (x @ y) font: font color: defaultBg ] ] ]
 		ifFalse: [
 			aCanvas frameRectangle: cursorBounds width: 1 color: defaultFg ].
@@ -564,36 +565,21 @@ SWATermMorph >> drawDetachedOn: aCanvas [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> drawOn: aCanvas [
-	"Draw the terminal grid: background, then each cell's background and glyph,
-	 then the cursor. Only the rows/cols that intersect the canvas clip rectangle
-	 are painted, so a partial invalidation (e.g. a single row changing while you
-	 type) costs one row of work instead of the whole grid -- independent of the
-	 window size."
-	| origin clip firstRow lastRow firstCol lastCol |
-	origin := self topLeft.
+	"Blit the grid cached in gridForm. Reading the cells costs one FFI call each,
+	 so it happens when the terminal reports a change, not on every draw."
 	self ensureThisProcess ifFalse: [
 		aCanvas fillRectangle: self bounds color: defaultBg.
 		self isDetached ifTrue: [ self drawDetachedOn: aCanvas ].
 		^ self ].
 	(cellWidth isNil or: [ cellHeight isNil or: [ cellWidth = 0 or: [ cellHeight = 0 ] ] ])
 		ifTrue: [ ^ self ].
-	"Restrict work to the damaged band."
-	clip := aCanvas clipRect intersect: self bounds.
-	clip area = 0 ifTrue: [ ^ self ].
-	aCanvas fillRectangle: clip color: defaultBg.
-	firstRow := ((clip top - origin y) // cellHeight max: 0).
-	lastRow := ((clip bottom - origin y - 1) // cellHeight min: terminal rows - 1).
-	firstCol := ((clip left - origin x) // cellWidth max: 0).
-	lastCol := ((clip right - origin x - 1) // cellWidth min: terminal cols - 1).
-	firstRow to: lastRow do: [ :row |
-		firstCol to: lastCol do: [ :col |
-			self drawCell: (terminal cellAt: row at: col)
-				row: row col: col
-				origin: origin on: aCanvas ] ].
-	self drawCursorOn: aCanvas origin: origin.
+	self extent area = 0 ifTrue: [ ^ self ].
+	self gridIsValid ifFalse: [ self repaintGrid ].
+	aCanvas drawImage: gridForm at: self topLeft.
+	self drawCursorOn: aCanvas origin: self topLeft.
 ]
 
 {
@@ -644,7 +630,7 @@ SWATermMorph >> font [
 
 {
 	#category : #accessing,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:01'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> font: aFont [
 	"Set the rendering font and recompute the cell metrics. The font should be
@@ -656,7 +642,7 @@ SWATermMorph >> font: aFont [
 	cellWidth := font widthOf: $m.
 	cellHeight := font height.
 	self resizeWindowToGrid.
-	self changed.
+	self gridChanged.
 ]
 
 {
@@ -688,6 +674,23 @@ SWATermMorph >> forwardInput [
 	| reply |
 	reply := terminal drainOutput.
 	reply isEmpty ifFalse: [ pty write: reply ].
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+}
+SWATermMorph >> gridChanged [
+	gridValid := false.
+	self changed.
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+}
+SWATermMorph >> gridIsValid [
+	^ gridValid == true and: [ gridForm notNil and: [ gridForm extent = self extent ] ]
 ]
 
 {
@@ -929,7 +932,7 @@ SWATermMorph >> logEvent: aStringBlock [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> mouseDown: evt [
 	"Grab keyboard focus so typing goes to the shell."
@@ -943,23 +946,23 @@ SWATermMorph >> mouseDown: evt [
 	selecting := true.
 	selectionStart := self cellAtPoint: evt position.
 	selectionEnd := selectionStart.
-	self changed.
+	self gridChanged.
 ]
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:55'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> mouseMove: evt [
 	"Extend the selection to the current cell while dragging."
 	selecting == true ifFalse: [ ^ self ].
 	selectionEnd := self cellAtPoint: evt position.
-	self changed.
+	self gridChanged.
 ]
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:56'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> mouseUp: evt [
 	"Finish a selection drag. A click without movement clears the selection."
@@ -967,7 +970,7 @@ SWATermMorph >> mouseUp: evt [
 	selecting := false.
 	selectionEnd := self cellAtPoint: evt position.
 	self hasSelection ifFalse: [ selectionStart := selectionEnd := nil ].
-	self changed.
+	self gridChanged.
 ]
 
 {
@@ -1082,7 +1085,7 @@ SWATermMorph >> ptyClass [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:47'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> pumpOnce [
 	"One iteration of the pump: drain PTY -> emulator, and emulator replies -> PTY.
@@ -1101,7 +1104,7 @@ SWATermMorph >> pumpOnce [
 		self logEvent: [ 'pty->emu ', input size printString, ' bytes: ',
 			(input asString copyReplaceAll: (String with: (Character value: 27)) with: '<ESC>') ].
 		terminal feed: input.
-		self terminalChanged.
+		self scheduleTerminalRefresh.
 		moved := true ].
 	reply := terminal drainOutput.
 	reply isEmpty ifFalse: [
@@ -1113,7 +1116,7 @@ SWATermMorph >> pumpOnce [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> reattach [
 	"Run the remembered command again in this window: a new emulator and a new
@@ -1123,7 +1126,7 @@ SWATermMorph >> reattach [
 	self rebuildTerminal.
 	pty respawn: terminal rows cols: terminal cols.
 	self startPump.
-	self changed
+	self gridChanged
 ]
 
 {
@@ -1145,6 +1148,38 @@ SWATermMorph >> rebuildTerminal [
 			rows: ((self height // cellHeight) max: 1)
 			cols: ((self width // cellWidth) max: 1) ]
 		ifNotNil: [ terminal reinit ]
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+}
+SWATermMorph >> repaintGrid [
+	(gridForm notNil and: [ gridForm extent = self extent ])
+		ifFalse: [ gridForm := Form extent: self extent depth: 32 ].
+	gridForm fillColor: defaultBg.
+	self updateCursorCache.
+	self repaintRows: (0 to: terminal rows - 1).
+	gridValid := true.
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+}
+SWATermMorph >> repaintRows: rowIndices [
+	"Reads libvterm one FFI call per cell."
+	| canvas cols |
+	canvas := gridForm getCanvas.
+	cols := terminal cols.
+	rowIndices do: [ :row |
+		canvas
+			fillRectangle: (0 @ (row * cellHeight) extent: gridForm width @ cellHeight)
+			color: defaultBg.
+		0 to: cols - 1 do: [ :col |
+			self drawCell: (terminal cellAt: row at: col)
+				row: row col: col
+				origin: 0 @ 0 on: canvas ] ].
 ]
 
 {
@@ -1185,7 +1220,7 @@ SWATermMorph >> restartShell [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:45'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> reviveAfterSnapshot [
 	"Called on image startUp (fresh load): the previous process's libvterm
@@ -1207,7 +1242,7 @@ SWATermMorph >> reviveAfterSnapshot [
 		ifNotNil: [
 			pty respawn: terminal rows cols: terminal cols.
 			self startPump ].
-	self changed
+	self gridChanged
 ]
 
 {
@@ -1223,14 +1258,28 @@ SWATermMorph >> rightTrim: aString [
 ]
 
 {
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+}
+SWATermMorph >> scheduleTerminalRefresh [
+	"Sent from the pump process. However many feeds arrive, the UI process runs
+	 terminalChanged once per cycle."
+	refreshPending == true ifTrue: [ ^ self ].
+	refreshPending := true.
+	Project current addDeferredUIMessage: [
+		refreshPending := false.
+		self terminalChanged ].
+]
+
+{
 	#category : #selection,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:56'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> selectAll [
 	"Select the entire visible grid."
 	selectionStart := 0 @ 0.
 	selectionEnd := (terminal cols - 1) @ (terminal rows - 1).
-	self changed.
+	self gridChanged.
 ]
 
 {
@@ -1264,13 +1313,13 @@ SWATermMorph >> selectedText [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:53'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> shellEnded [
 	"The child process closed the PTY. Tear down the pump."
 	pty ifNotNil: [ pty close. pty := nil ].
 	pumpProcess := nil.
-	self changed.
+	self gridChanged.
 ]
 
 {
@@ -1359,17 +1408,15 @@ SWATermMorph >> startShell [
 
 {
 	#category : #'stepping and presenter',
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:12'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> step [
-	"Toggle the cursor blink state and redraw just the cursor cell."
-	| pos x y |
+	| x y |
 	blinkState := blinkState not.
-	terminal ifNil: [ ^ self ].
-	pos := terminal cursorPos.
-	x := self left + (pos x * cellWidth).
-	y := self top + (pos y * cellHeight).
-	self invalidRect: ((x @ y) extent: (cellWidth @ cellHeight))
+	lastCursorPos ifNil: [ ^ self ].
+	x := self left + (lastCursorPos x * cellWidth).
+	y := self top + (lastCursorPos y * cellHeight).
+	self invalidRect: ((x @ y) extent: (cellWidth @ cellHeight)).
 ]
 
 {
@@ -1408,42 +1455,39 @@ SWATermMorph >> terminal [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:19'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> terminalChanged [
-	"Invalidate only the rows whose content changed since the last frame, plus the
-	 old and new cursor rows. Keeps typing cost proportional to the number of
-	 changed rows (usually one) instead of the whole grid. Falls back to a full
-	 invalidate if the grid size changed (e.g. after a resize)."
-	| rows cols newHashes dirty origin cursor |
+	"Repaint the changed rows into gridForm and invalidate them as ONE rectangle:
+	 DamageRecorder does not merge rects that only touch, and each separate rect
+	 costs a full pass over the world."
+	| rows cols newHashes dirty |
 	terminal ifNil: [ ^ self changed ].
 	(cellWidth isNil or: [ cellHeight isNil ]) ifTrue: [ ^ self changed ].
 	rows := terminal rows.
 	cols := terminal cols.
-	origin := self topLeft.
-	newHashes := Array new: rows.
-	dirty := OrderedCollection new.
 	(rowHashes isNil or: [ rowHashes size ~= rows ]) ifTrue: [
-		"first frame or size change: repaint everything, seed the shadow"
-		rowHashes := Array new: rows withAll: nil.
-		self changed ].
+		rowHashes := Array new: rows.
+		gridValid := false ].
+	newHashes := Array new: rows.
+	dirty := Set new.
 	0 to: rows - 1 do: [ :row |
 		| h |
 		h := self hashRow: row cols: cols.
 		newHashes at: row + 1 put: h.
 		(rowHashes at: row + 1) = h ifFalse: [ dirty add: row ] ].
 	rowHashes := newHashes.
-	"Cursor row(s): the block cursor overlays a cell, so its old and new rows must
-	 repaint even if the underlying cells did not change."
-	cursor := terminal cursorPos.
+	"Colour-only changes do not flip the hash; repainting the cursor rows catches
+	 the common case of them."
 	lastCursorPos ifNotNil: [ dirty add: lastCursorPos y ].
-	dirty add: cursor y.
-	lastCursorPos := cursor.
-	"Invalidate each dirty row band."
-	dirty asSet do: [ :row |
-		(row between: 0 and: rows - 1) ifTrue: [
-			self invalidRect: ((origin x @ (origin y + (row * cellHeight)))
-				extent: (self width @ cellHeight)) ] ]
+	self updateCursorCache.
+	dirty add: lastCursorPos y.
+	dirty := dirty select: [ :row | row between: 0 and: rows - 1 ].
+	dirty isEmpty ifTrue: [ ^ self ].
+	self gridIsValid ifFalse: [ ^ self changed ].
+	self repaintRows: dirty.
+	self invalidRect: ((self left @ (self top + (dirty min * cellHeight)))
+		corner: (self right @ (self top + (dirty max + 1 * cellHeight)))).
 ]
 
 {
@@ -1455,8 +1499,19 @@ SWATermMorph >> toggleDebugEvents [
 ]
 
 {
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+}
+SWATermMorph >> updateCursorCache [
+	| cell |
+	lastCursorPos := terminal cursorPos.
+	cell := terminal cellAt: lastCursorPos y at: lastCursorPos x.
+	cursorChar := cell ifNil: [ $  ] ifNotNil: [ cell character ].
+]
+
+{
 	#category : #geometry,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:17'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
 SWATermMorph >> updateGridForExtent [
 	"Derive cols/rows from the current pixel extent and, if they changed, resize
@@ -1471,7 +1526,7 @@ SWATermMorph >> updateGridForExtent [
 	pty ifNotNil: [ pty resizeRows: newRows cols: newCols ].
 	"Clamp any selection to the new bounds."
 	self clampSelection.
-	self changed.
+	self gridChanged.
 ]
 
 {
