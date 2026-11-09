@@ -1128,7 +1128,7 @@ SWATermMorph >> reattach [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:17'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:35'
 }
 SWATermMorph >> rebuildTerminal [
 	"Give this morph a usable emulator at its current pixel size, whether the old
@@ -1139,6 +1139,7 @@ SWATermMorph >> rebuildTerminal [
 	Smalltalk unbindExternalPrimitives.
 	SWATermLibrary resetDefault.
 	SWATermKernel32 resetDefault.
+	SWATermLibc resetDefault.
 	terminal
 		ifNil: [ terminal := SWATerm
 			rows: ((self height // cellHeight) max: 1)
