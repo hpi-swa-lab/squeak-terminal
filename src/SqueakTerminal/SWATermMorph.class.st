@@ -14,9 +14,8 @@ Class {
 		'selectionStart',
 		'selectionEnd',
 		'selecting',
-		'rowHashes',
+		'rowSignatures',
 		'lastCursorPos',
-		'rowScanBuffer',
 		'gridForm',
 		'gridValid',
 		'refreshPending',
@@ -350,6 +349,14 @@ SWATermMorph >> cellAtPoint: aPoint [
 	col := col min: terminal cols - 1.
 	row := row min: terminal rows - 1.
 	^ col @ row
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:55'
+}
+SWATermMorph >> cellsOfRow: row cols: cols [
+	^ (0 to: cols - 1) collect: [ :col | terminal cellAt: row at: col ]
 ]
 
 {
@@ -800,28 +807,6 @@ SWATermMorph >> hasSelection [
 ]
 
 {
-	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:30'
-}
-SWATermMorph >> hashRow: row cols: cols [
-	"A cheap content signature for one row, used to detect which rows to repaint.
-	 Reads the whole row's codepoints in a SINGLE FFI call (vterm_screen_get_chars)
-	 into a reused scratch buffer, then folds the raw uint32 bytes into a hash --
-	 ~cols times fewer FFI calls than one get_cell per cell. Colour/attr-only
-	 changes are caught by the cursor-row repaint and by full repaints on scroll;
-	 glyph changes (the common typing case) always flip the hash."
-	| need n h |
-	need := cols * 4.
-	(rowScanBuffer isNil or: [ rowScanBuffer size < need ])
-		ifTrue: [ rowScanBuffer := ByteArray new: need ].
-	n := terminal rowCodepointsInto: rowScanBuffer row: row.
-	h := 16r811C9DC5.  "FNV-1a offset basis (32-bit)"
-	1 to: need do: [ :i |
-		h := (h bitXor: (rowScanBuffer at: i)) * 16r01000193 bitAnd: 16rFFFFFFFF ].
-	^ h
-]
-
-{
 	#category : #'initialize-release',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:36'
 }
@@ -1152,34 +1137,34 @@ SWATermMorph >> rebuildTerminal [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:55'
 }
-SWATermMorph >> repaintGrid [
-	(gridForm notNil and: [ gridForm extent = self extent ])
-		ifFalse: [ gridForm := Form extent: self extent depth: 32 ].
-	gridForm fillColor: defaultBg.
-	self updateCursorCache.
-	self repaintRows: (0 to: terminal rows - 1).
-	gridValid := true.
+SWATermMorph >> repaintCells: cellsByRow [
+	| canvas |
+	canvas := gridForm getCanvas.
+	cellsByRow keysAndValuesDo: [ :row :cells |
+		canvas
+			fillRectangle: (0 @ (row * cellHeight) extent: gridForm width @ cellHeight)
+			color: defaultBg.
+		cells doWithIndex: [ :cell :i |
+			self drawCell: cell row: row col: i - 1 origin: 0 @ 0 on: canvas ] ].
 ]
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:55'
 }
-SWATermMorph >> repaintRows: rowIndices [
-	"Reads libvterm one FFI call per cell."
-	| canvas cols |
-	canvas := gridForm getCanvas.
-	cols := terminal cols.
-	rowIndices do: [ :row |
-		canvas
-			fillRectangle: (0 @ (row * cellHeight) extent: gridForm width @ cellHeight)
-			color: defaultBg.
-		0 to: cols - 1 do: [ :col |
-			self drawCell: (terminal cellAt: row at: col)
-				row: row col: col
-				origin: 0 @ 0 on: canvas ] ].
+SWATermMorph >> repaintGrid [
+	| cellsByRow |
+	(gridForm notNil and: [ gridForm extent = self extent ])
+		ifFalse: [ gridForm := Form extent: self extent depth: 32 ].
+	gridForm fillColor: defaultBg.
+	self updateCursorCache.
+	cellsByRow := Dictionary new.
+	0 to: terminal rows - 1 do: [ :row |
+		cellsByRow at: row put: (self cellsOfRow: row cols: terminal cols) ].
+	self repaintCells: cellsByRow.
+	gridValid := true.
 ]
 
 {
@@ -1331,6 +1316,21 @@ SWATermMorph >> shrinkFont [
 ]
 
 {
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:56'
+}
+SWATermMorph >> signatureOf: cells [
+	"All bytes of the libvterm cells, colours included: mc moves its selection bar
+	 without changing a character."
+	| size bytes |
+	size := SWATermCell externalType byteSize.
+	bytes := ByteArray new: cells size * size.
+	cells doWithIndex: [ :cell :i |
+		bytes replaceFrom: i - 1 * size + 1 to: i * size with: cell getHandle startingAt: 1 ].
+	^ bytes
+]
+
+{
 	#category : #'event handling',
 	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:14'
 }
@@ -1455,37 +1455,37 @@ SWATermMorph >> terminal [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:55'
 }
 SWATermMorph >> terminalChanged [
-	"Repaint the changed rows into gridForm and invalidate them as ONE rectangle:
-	 DamageRecorder does not merge rects that only touch, and each separate rect
-	 costs a full pass over the world."
-	| rows cols newHashes dirty |
+	"Invalidate the changed rows as ONE rectangle: DamageRecorder does not merge
+	 rects that only touch, and each separate rect costs a full pass over the world."
+	| rows cols newSignatures changedCells dirty |
 	terminal ifNil: [ ^ self changed ].
 	(cellWidth isNil or: [ cellHeight isNil ]) ifTrue: [ ^ self changed ].
 	rows := terminal rows.
 	cols := terminal cols.
-	(rowHashes isNil or: [ rowHashes size ~= rows ]) ifTrue: [
-		rowHashes := Array new: rows.
+	(rowSignatures isNil or: [ rowSignatures size ~= rows ]) ifTrue: [
+		rowSignatures := Array new: rows.
 		gridValid := false ].
-	newHashes := Array new: rows.
-	dirty := Set new.
+	newSignatures := Array new: rows.
+	changedCells := Dictionary new.
 	0 to: rows - 1 do: [ :row |
-		| h |
-		h := self hashRow: row cols: cols.
-		newHashes at: row + 1 put: h.
-		(rowHashes at: row + 1) = h ifFalse: [ dirty add: row ] ].
-	rowHashes := newHashes.
-	"Colour-only changes do not flip the hash; repainting the cursor rows catches
-	 the common case of them."
+		| cells signature |
+		cells := self cellsOfRow: row cols: cols.
+		signature := self signatureOf: cells.
+		newSignatures at: row + 1 put: signature.
+		(rowSignatures at: row + 1) = signature ifFalse: [ changedCells at: row put: cells ] ].
+	rowSignatures := newSignatures.
+	"The cursor is drawn over gridForm: its old and new rows need invalidating only."
+	dirty := changedCells keys asSet.
 	lastCursorPos ifNotNil: [ dirty add: lastCursorPos y ].
 	self updateCursorCache.
 	dirty add: lastCursorPos y.
 	dirty := dirty select: [ :row | row between: 0 and: rows - 1 ].
 	dirty isEmpty ifTrue: [ ^ self ].
 	self gridIsValid ifFalse: [ ^ self changed ].
-	self repaintRows: dirty.
+	self repaintCells: changedCells.
 	self invalidRect: ((self left @ (self top + (dirty min * cellHeight)))
 		corner: (self right @ (self top + (dirty max + 1 * cellHeight)))).
 ]
