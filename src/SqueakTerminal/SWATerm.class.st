@@ -22,7 +22,9 @@ Class {
 		'state',
 		'rows',
 		'cols',
-		'ownerPid'
+		'ownerPid',
+		'readPos',
+		'readCell'
 	],
 	#category : #SqueakTerminal,
 	#'squeak_changestamp' : '<historical>'
@@ -105,6 +107,25 @@ SWATerm >> cellAt: row at: col [
 	cell := SWATermCell new.
 	lib vterm_screen: screen getCellAt: pos into: cell.
 	^ cell
+]
+
+{
+	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:08'
+}
+SWATerm >> cellsIn: rowBytes [
+	| size |
+	size := SWATermCell externalType byteSize.
+	^ (1 to: rowBytes size by: size) collect: [ :i |
+		SWATermCell fromHandle: (rowBytes copyFrom: i to: i + size - 1) ]
+]
+
+{
+	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:08'
+}
+SWATerm >> cellsOfRow: row [
+	^ self cellsIn: (self rowBytes: row)
 ]
 
 {
@@ -357,6 +378,28 @@ SWATerm >> resizeRows: r cols: c [
 	self isDead ifTrue: [ ^ self ].
 	lib vterm_set_size: vt rows: r cols: c.
 	lib vterm_screen_flush_damage: screen.
+]
+
+{
+	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:08'
+}
+SWATerm >> rowBytes: row [
+	"The raw VTermScreenCells of a row, read through one reused pos and cell:
+	 allocating an ExternalStructure costs ten times the FFI call."
+	| size bytes |
+	self isDead ifTrue: [ ^ ByteArray new ].
+	(row between: 0 and: rows - 1) ifFalse: [ ^ ByteArray new ].
+	size := SWATermCell externalType byteSize.
+	readPos ifNil: [ readPos := SWATermPos new ].
+	readCell ifNil: [ readCell := SWATermCell new ].
+	bytes := ByteArray new: cols * size.
+	readPos row: row.
+	0 to: cols - 1 do: [ :col |
+		readPos col: col.
+		lib vterm_screen: screen getCellAt: readPos into: readCell.
+		bytes replaceFrom: col * size + 1 to: col + 1 * size with: readCell getHandle startingAt: 1 ].
+	^ bytes
 ]
 
 {

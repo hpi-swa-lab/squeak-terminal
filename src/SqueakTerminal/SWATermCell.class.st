@@ -20,6 +20,9 @@ Class {
 	#classVars : [
 		'SystemColors'
 	],
+	#classInstVars : [
+		'colorCache'
+	],
 	#category : #SqueakTerminal,
 	#'squeak_changestamp' : '<historical>'
 }
@@ -44,6 +47,37 @@ SWATermCell class >> ansiColor: idx [
 	"grayscale 232-255"
 	lvl := 8 + ((i - 232) * 10).
 	^ Color r: lvl g: lvl b: lvl range: 255
+]
+
+{
+	#category : #colors,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
+}
+SWATermCell class >> colorFromWord: word [
+	"Decoding allocates a Color, and a screen uses only a few distinct words."
+	(colorCache isNil or: [ colorCache size > 4096 ]) ifTrue: [ colorCache := Dictionary new ].
+	^ colorCache at: word ifAbsentPut: [ self decodeColorWord: word ]
+]
+
+{
+	#category : #colors,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
+}
+SWATermCell class >> decodeColorWord: word [
+	"Decode a VTermColor (4 bytes packed little-endian in a ulong).
+	 byte0=type; if type even -> RGB(byte1,2,3); if odd (indexed) -> byte1=palette idx.
+	 Returns a Squeak Color, or nil to mean 'use default fg/bg'."
+	| type b1 b2 b3 |
+	type := word bitAnd: 16rFF.
+	b1 := (word bitShift: -8) bitAnd: 16rFF.
+	b2 := (word bitShift: -16) bitAnd: 16rFF.
+	b3 := (word bitShift: -24) bitAnd: 16rFF.
+	(type bitAnd: 1) = 0
+		ifTrue: [ ^ Color r: b1 g: b2 b: b3 range: 255 ]
+		ifFalse: [
+			"Indexed. type bit1 set => DEFAULT_FG/BG; return nil so caller applies its default."
+			(type bitAnd: 2) ~= 0 ifTrue: [ ^ nil ].
+			^ self ansiColor: b1 ]
 ]
 
 {
@@ -137,24 +171,11 @@ SWATermCell >> codepoint [
 ]
 
 {
-	#category : #decoding,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:43'
+	#category : #accessing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
 }
 SWATermCell >> colorFromWord: word [
-	"Decode a VTermColor (4 bytes packed little-endian in a ulong).
-	 byte0=type; if type even -> RGB(byte1,2,3); if odd (indexed) -> byte1=palette idx.
-	 Returns a Squeak Color, or nil to mean 'use default fg/bg'."
-	| type b1 b2 b3 |
-	type := word bitAnd: 16rFF.
-	b1 := (word bitShift: -8) bitAnd: 16rFF.
-	b2 := (word bitShift: -16) bitAnd: 16rFF.
-	b3 := (word bitShift: -24) bitAnd: 16rFF.
-	(type bitAnd: 1) = 0
-		ifTrue: [ ^ Color r: b1 g: b2 b: b3 range: 255 ]
-		ifFalse: [
-			"Indexed. type bit1 set => DEFAULT_FG/BG; return nil so caller applies its default."
-			(type bitAnd: 2) ~= 0 ifTrue: [ ^ nil ].
-			^ self class ansiColor: b1 ]
+	^ self class colorFromWord: word
 ]
 
 {

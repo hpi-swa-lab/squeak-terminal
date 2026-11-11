@@ -99,6 +99,17 @@ SWATermTest >> testCellAtOutOfRange [
 
 {
 	#category : #tests,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:08'
+}
+SWATermTest >> testCellsOfRowMatchCellAt [
+	terminal feed: 'a', (self escape: '[1;31;44m'), (String with: (Character value: 16r4E2D)), (self escape: '[38;2;1;2;3m'), (String with: (Character value: 16r2502)), (self escape: '[0m'), 'z'.
+	(terminal cellsOfRow: 0) doWithIndex: [ :cell :i |
+		self assert: (terminal cellAt: 0 at: i - 1) getHandle equals: cell getHandle ].
+	self assert: terminal cols equals: (terminal cellsOfRow: 0) size.
+]
+
+{
+	#category : #tests,
 	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:57'
 }
 SWATermTest >> testColours [
@@ -217,6 +228,17 @@ SWATermTest >> testResize [
 	self assert: nil equals: (terminal cellAt: 3 at: 0).
 	self assert: nil equals: (terminal cellAt: 0 at: 4).
 	self assert: 4 equals: (terminal rowString: 0) size.
+]
+
+{
+	#category : #tests,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:08'
+}
+SWATermTest >> testRowBytesOfDeadTerminalOrMissingRow [
+	self assert: ByteArray new equals: (terminal rowBytes: terminal rows).
+	terminal free.
+	self assert: ByteArray new equals: (terminal rowBytes: 0).
+	self assert: #() equals: (terminal cellsOfRow: 0) asArray.
 ]
 
 {

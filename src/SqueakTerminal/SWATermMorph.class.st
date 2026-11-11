@@ -19,7 +19,8 @@ Class {
 		'gridForm',
 		'gridValid',
 		'refreshPending',
-		'cursorChar'
+		'cursorChar',
+		'lastInputTime'
 	],
 	#classVars : [
 		'DebugEvents'
@@ -352,14 +353,6 @@ SWATermMorph >> cellAtPoint: aPoint [
 ]
 
 {
-	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:55'
-}
-SWATermMorph >> cellsOfRow: row cols: cols [
-	^ (0 to: cols - 1) collect: [ :col | terminal cellAt: row at: col ]
-]
-
-{
 	#category : #fonts,
 	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:53'
 }
@@ -423,6 +416,20 @@ SWATermMorph >> clampSelection [
 SWATermMorph >> clearSelection [
 	selectionStart := selectionEnd := nil.
 	self gridChanged.
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
+}
+SWATermMorph >> coloursOf: cell row: row col: col [
+	"Answer foreground -> background as drawn, after reverse video and selection."
+	| fg bg |
+	fg := cell fgColor ifNil: [ defaultFg ].
+	bg := cell bgColor ifNil: [ defaultBg ].
+	cell reverse ifTrue: [ | t | t := fg. fg := bg. bg := t ].
+	(self isCellSelectedRow: row col: col) ifTrue: [ | t | t := fg. fg := bg. bg := t ].
+	^ fg -> bg
 ]
 
 {
@@ -506,32 +513,16 @@ SWATermMorph >> downloadAndUsePreferredFont [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:56'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
 }
 SWATermMorph >> drawCell: cell row: row col: col origin: origin on: aCanvas [
-	"Draw one cell: background fill (if non-default) then the glyph."
-	| x y fg bg ch cellBounds selected |
+	| colours topLeft |
 	cell ifNil: [ ^ self ].
-	x := origin x + (col * cellWidth).
-	y := origin y + (row * cellHeight).
-	fg := cell fgColor ifNil: [ defaultFg ].
-	bg := cell bgColor ifNil: [ defaultBg ].
-	cell reverse ifTrue: [ | t | t := fg. fg := bg. bg := t ].
-	selected := self isCellSelectedRow: row col: col.
-	selected ifTrue: [ | t | t := fg. fg := bg. bg := t ].
-	cellBounds := (x @ y) extent: (cellWidth @ cellHeight).
-	bg = defaultBg ifFalse: [ aCanvas fillRectangle: cellBounds color: bg ].
-	ch := cell character.
-	ch = $  ifTrue: [ ^ self ].
-	aCanvas
-		drawString: (String with: ch)
-		at: (x @ y)
-		font: font
-		color: fg.
-	cell bold ifTrue: [
-		aCanvas drawString: (String with: ch) at: (x + 1 @ y) font: font color: fg ].
-	cell underline > 0 ifTrue: [
-		aCanvas line: (x @ (y + cellHeight - 2)) to: (x + cellWidth @ (y + cellHeight - 2)) width: 1 color: fg ].
+	colours := self coloursOf: cell row: row col: col.
+	topLeft := origin + ((col * cellWidth) @ (row * cellHeight)).
+	colours value = defaultBg ifFalse: [
+		aCanvas fillRectangle: (topLeft extent: cellWidth @ cellHeight) color: colours value ].
+	self drawGlyphOf: cell color: colours key at: topLeft on: aCanvas.
 ]
 
 {
@@ -568,6 +559,26 @@ SWATermMorph >> drawDetachedOn: aCanvas [
 		at: self topLeft + (cellWidth @ cellHeight)
 		font: font
 		color: defaultFg
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
+}
+SWATermMorph >> drawGlyphOf: cell color: fg at: aPoint on: aCanvas [
+	| ch |
+	cell underline > 0 ifTrue: [
+		aCanvas
+			line: aPoint x @ (aPoint y + cellHeight - 2)
+			to: (aPoint x + cellWidth) @ (aPoint y + cellHeight - 2)
+			width: 1 color: fg ].
+	"16rFFFFFFFF marks the right half of a wide character."
+	cell codepoint = 16rFFFFFFFF ifTrue: [ ^ self ].
+	ch := cell character.
+	ch = $  ifTrue: [ ^ self ].
+	aCanvas drawString: (String with: ch) at: aPoint font: font color: fg.
+	cell bold ifTrue: [
+		aCanvas drawString: (String with: ch) at: aPoint + (1 @ 0) font: font color: fg ].
 ]
 
 {
@@ -674,13 +685,13 @@ SWATermMorph >> fontSize: points [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:54'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:16'
 }
 SWATermMorph >> forwardInput [
 	"Drain libvterm's encoded keyboard output and write it to the PTY."
 	| reply |
 	reply := terminal drainOutput.
-	reply isEmpty ifFalse: [ pty write: reply ].
+	reply isEmpty ifFalse: [ self writeInput: reply ].
 ]
 
 {
@@ -804,6 +815,18 @@ SWATermMorph >> hasFocus [
 SWATermMorph >> hasSelection [
 	^ selectionStart notNil and: [ selectionEnd notNil
 		and: [ selectionStart ~= selectionEnd ] ]
+]
+
+{
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:16'
+}
+SWATermMorph >> idlePollInterval [
+	"The shell echoes a key a few milliseconds after it is written; a 16 ms sleep
+	 made that echo wait 25 ms on average before it was even read."
+	^ (lastInputTime notNil and: [ (Time millisecondsSince: lastInputTime) < 500 ])
+		ifTrue: [ 1 ]
+		ifFalse: [ 16 ]
 ]
 
 {
@@ -1026,7 +1049,7 @@ SWATermMorph >> orderedSelection [
 
 {
 	#category : #clipboard,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:56'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:16'
 }
 SWATermMorph >> paste [
 	"Send the clipboard contents to the shell as if typed."
@@ -1037,7 +1060,7 @@ SWATermMorph >> paste [
 	self logEvent: [ 'paste ', text size printString, ' chars' ].
 	"Normalize line endings to CR (what a terminal expects for Enter)."
 	text := text asString copyReplaceAll: (String with: Character lf) with: (String with: Character cr).
-	pty write: text utf8Encoded.
+	self writeInput: text utf8Encoded.
 ]
 
 {
@@ -1137,34 +1160,56 @@ SWATermMorph >> rebuildTerminal [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:55'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
 }
 SWATermMorph >> repaintCells: cellsByRow [
 	| canvas |
 	canvas := gridForm getCanvas.
-	cellsByRow keysAndValuesDo: [ :row :cells |
-		canvas
-			fillRectangle: (0 @ (row * cellHeight) extent: gridForm width @ cellHeight)
-			color: defaultBg.
-		cells doWithIndex: [ :cell :i |
-			self drawCell: cell row: row col: i - 1 origin: 0 @ 0 on: canvas ] ].
+	cellsByRow keysAndValuesDo: [ :row :cells | self repaintRow: row cells: cells on: canvas ].
 ]
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:55'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
 }
 SWATermMorph >> repaintGrid [
+	"repaintRow:cells:on: fills whole rows, so only the strip below the last row needs clearing."
 	| cellsByRow |
 	(gridForm notNil and: [ gridForm extent = self extent ])
 		ifFalse: [ gridForm := Form extent: self extent depth: 32 ].
-	gridForm fillColor: defaultBg.
+	gridForm getCanvas
+		fillRectangle: (0 @ (terminal rows * cellHeight) corner: gridForm extent)
+		color: defaultBg.
 	self updateCursorCache.
 	cellsByRow := Dictionary new.
 	0 to: terminal rows - 1 do: [ :row |
-		cellsByRow at: row put: (self cellsOfRow: row cols: terminal cols) ].
+		cellsByRow at: row put: (terminal cellsOfRow: row) ].
 	self repaintCells: cellsByRow.
 	gridValid := true.
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
+}
+SWATermMorph >> repaintRow: row cells: cells on: aCanvas [
+	"Backgrounds are filled in runs: a coloured bar is one fill, not one per cell.
+	 All backgrounds go first, so none paints over the right half of a wide glyph."
+	| y colours runStart |
+	y := row * cellHeight.
+	colours := (1 to: cells size) collect: [ :i | self coloursOf: (cells at: i) row: row col: i - 1 ].
+	cells isEmpty ifTrue: [
+		^ aCanvas fillRectangle: (0 @ y extent: gridForm width @ cellHeight) color: defaultBg ].
+	runStart := 1.
+	2 to: colours size + 1 do: [ :i |
+		(i > colours size or: [ (colours at: i) value ~= (colours at: runStart) value ]) ifTrue: [
+			aCanvas
+				fillRectangle: ((runStart - 1 * cellWidth) @ y
+					corner: (i > colours size ifTrue: [ gridForm width ] ifFalse: [ i - 1 * cellWidth ]) @ (y + cellHeight))
+				color: (colours at: runStart) value.
+			runStart := i ] ].
+	cells doWithIndex: [ :cell :i |
+		self drawGlyphOf: cell color: (colours at: i) key at: (i - 1 * cellWidth) @ y on: aCanvas ].
 ]
 
 {
@@ -1316,21 +1361,6 @@ SWATermMorph >> shrinkFont [
 ]
 
 {
-	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:56'
-}
-SWATermMorph >> signatureOf: cells [
-	"All bytes of the libvterm cells, colours included: mc moves its selection bar
-	 without changing a character."
-	| size bytes |
-	size := SWATermCell externalType byteSize.
-	bytes := ByteArray new: cells size * size.
-	cells doWithIndex: [ :cell :i |
-		bytes replaceFrom: i - 1 * size + 1 to: i * size with: cell getHandle startingAt: 1 ].
-	^ bytes
-]
-
-{
 	#category : #'event handling',
 	#'squeak_changestamp' : 'MCPServer 7/27/2026 16:14'
 }
@@ -1372,7 +1402,7 @@ SWATermMorph >> startCommand: cmd args: argArray [
 
 {
 	#category : #shell,
-	#'squeak_changestamp' : 'MCPServer 7/27/2026 17:00'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:16'
 }
 SWATermMorph >> startPump [
 	"Background process: read PTY output -> feed emulator -> forward emulator
@@ -1382,13 +1412,13 @@ SWATermMorph >> startPump [
 		[ pty notNil and: [ pty masterFd >= 0 ] ] whileTrue: [
 			"pumpOnce answers true when it moved data. While output keeps flowing
 			 (e.g. `cat` of a big file) keep pumping with no sleep so the child
-			 never blocks on a full PTY buffer; only sleep 16ms once idle. Cap the
+			 never blocks on a full PTY buffer; only sleep once idle. Cap the
 			 burst and yield so a never-ending stream can't starve other processes."
 			| burst |
 			burst := 0.
 			[ self pumpOnce and: [ (burst := burst + 1) < 64 ] ] whileTrue: [ ].
 			burst = 0
-				ifTrue: [ (Delay forMilliseconds: 16) wait ]
+				ifTrue: [ (Delay forMilliseconds: self idlePollInterval) wait ]
 				ifFalse: [ Processor yield ] ]
 	] newProcess.
 	pumpProcess priority: Processor userBackgroundPriority.
@@ -1455,27 +1485,30 @@ SWATermMorph >> terminal [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:55'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:13'
 }
 SWATermMorph >> terminalChanged [
 	"Invalidate the changed rows as ONE rectangle: DamageRecorder does not merge
 	 rects that only touch, and each separate rect costs a full pass over the world."
-	| rows cols newSignatures changedCells dirty |
+	| rows newSignatures changedCells dirty order |
 	terminal ifNil: [ ^ self changed ].
 	(cellWidth isNil or: [ cellHeight isNil ]) ifTrue: [ ^ self changed ].
 	rows := terminal rows.
-	cols := terminal cols.
 	(rowSignatures isNil or: [ rowSignatures size ~= rows ]) ifTrue: [
 		rowSignatures := Array new: rows.
 		gridValid := false ].
 	newSignatures := Array new: rows.
+	"The comparison primitive; SequenceableCollection>>= compares in Smalltalk, 15 times slower."
+	order := (0 to: 255) asByteArray.
 	changedCells := Dictionary new.
 	0 to: rows - 1 do: [ :row |
-		| cells signature |
-		cells := self cellsOfRow: row cols: cols.
-		signature := self signatureOf: cells.
-		newSignatures at: row + 1 put: signature.
-		(rowSignatures at: row + 1) = signature ifFalse: [ changedCells at: row put: cells ] ].
+		| bytes |
+		"Whole cells, colours included: mc moves its selection bar without changing a character."
+		bytes := terminal rowBytes: row.
+		newSignatures at: row + 1 put: bytes.
+		((rowSignatures at: row + 1) notNil and: [
+			(ByteString compare: (rowSignatures at: row + 1) with: bytes collated: order) = 2 ])
+				ifFalse: [ changedCells at: row put: (terminal cellsIn: bytes) ] ].
 	rowSignatures := newSignatures.
 	"The cursor is drawn over gridForm: its old and new rows need invalidating only."
 	dirty := changedCells keys asSet.
@@ -1547,6 +1580,15 @@ SWATermMorph >> windowIsClosing [
 	 and release libvterm."
 	self stopShell.
 	terminal ifNotNil: [ terminal free. terminal := nil ].
+]
+
+{
+	#category : #shell,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:16'
+}
+SWATermMorph >> writeInput: bytes [
+	lastInputTime := Time millisecondClockValue.
+	pty write: bytes.
 ]
 
 {
