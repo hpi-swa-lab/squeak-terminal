@@ -22,7 +22,8 @@ Class {
 		'cursorChar',
 		'lastInputTime',
 		'scrollOffset',
-		'seenPushedLines'
+		'seenPushedLines',
+		'reportedButton'
 	],
 	#classVars : [
 		'DebugEvents'
@@ -845,11 +846,11 @@ SWATermMorph >> handlesMouseDown: evt [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:55'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
 }
 SWATermMorph >> handlesMouseMove: evt [
 	"Track drags while selecting."
-	^ selecting == true
+	^ selecting == true or: [ reportedButton notNil ]
 ]
 
 {
@@ -1009,7 +1010,7 @@ SWATermMorph >> logEvent: aStringBlock [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
 }
 SWATermMorph >> mouseDown: evt [
 	"Grab keyboard focus so typing goes to the shell."
@@ -1017,6 +1018,7 @@ SWATermMorph >> mouseDown: evt [
 		' yellow=', evt yellowButtonChanged printString ].
 	evt hand newKeyboardFocus: self.
 	self isDetached ifTrue: [ ^ self reattach ].
+	(self reportPress: evt) ifTrue: [ ^ self ].
 	evt yellowButtonChanged
 		ifTrue: [ ^ self yellowButtonActivity: evt shiftPressed ].
 	"Left button: begin a text selection."
@@ -1028,10 +1030,14 @@ SWATermMorph >> mouseDown: evt [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
 }
 SWATermMorph >> mouseMove: evt [
 	"Extend the selection to the current cell while dragging."
+	reportedButton ifNotNil: [ | cell |
+		cell := self cellAtPoint: evt position.
+		terminal mouseMoveRow: cell y col: cell x mod: (self vtermModifiersOf: evt).
+		^ self forwardInput ].
 	selecting == true ifFalse: [ ^ self ].
 	selectionEnd := self cellAtPoint: evt position.
 	self gridChanged.
@@ -1039,10 +1045,11 @@ SWATermMorph >> mouseMove: evt [
 
 {
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
 }
 SWATermMorph >> mouseUp: evt [
 	"Finish a selection drag. A click without movement clears the selection."
+	reportedButton ifNotNil: [ ^ self reportRelease: evt ].
 	selecting == true ifFalse: [ ^ self ].
 	selecting := false.
 	selectionEnd := self cellAtPoint: evt position.
@@ -1301,6 +1308,41 @@ SWATermMorph >> repaintRow: row cells: cells on: aCanvas [
 			runStart := i ] ].
 	cells doWithIndex: [ :cell :i |
 		self drawGlyphOf: cell color: (colours at: i) key at: (i - 1 * cellWidth) @ y on: aCanvas ].
+]
+
+{
+	#category : #'event handling',
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
+}
+SWATermMorph >> reportPress: evt [
+	"Answer whether the application took the press. libvterm encodes nothing unless it
+	 turned on mouse reporting; then the press is withdrawn so libvterm does not keep the
+	 button down."
+	| button cell reply |
+	(pty isNil or: [ evt shiftPressed or: [ self isScrolledBack ] ]) ifTrue: [ ^ false ].
+	button := self vtermButtonOf: evt.
+	cell := self cellAtPoint: evt position.
+	terminal mouseButton: button pressed: true row: cell y col: cell x mod: (self vtermModifiersOf: evt).
+	reply := terminal drainOutput.
+	reply isEmpty ifTrue: [
+		terminal mouseButton: button pressed: false row: cell y col: cell x mod: 0.
+		terminal drainOutput.
+		^ false ].
+	self writeInput: reply.
+	reportedButton := button.
+	^ true
+]
+
+{
+	#category : #'event handling',
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
+}
+SWATermMorph >> reportRelease: evt [
+	| cell |
+	cell := self cellAtPoint: evt position.
+	terminal mouseButton: reportedButton pressed: false row: cell y col: cell x mod: (self vtermModifiersOf: evt).
+	reportedButton := nil.
+	self forwardInput.
 ]
 
 {
@@ -1678,6 +1720,30 @@ SWATermMorph >> updateGridForExtent [
 	"Clamp any selection to the new bounds."
 	self clampSelection.
 	self gridChanged.
+]
+
+{
+	#category : #'event handling',
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
+}
+SWATermMorph >> vtermButtonOf: evt [
+	evt yellowButtonChanged ifTrue: [ ^ 3 ].
+	evt blueButtonChanged ifTrue: [ ^ 2 ].
+	^ 1
+]
+
+{
+	#category : #'event handling',
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
+}
+SWATermMorph >> vtermModifiersOf: evt [
+	"See #keyStroke: for why command only counts as Alt without Ctrl."
+	| mod |
+	mod := 0.
+	evt shiftPressed ifTrue: [ mod := mod bitOr: 1 ].
+	(evt commandKeyPressed and: [ evt controlKeyPressed not ]) ifTrue: [ mod := mod bitOr: 2 ].
+	evt controlKeyPressed ifTrue: [ mod := mod bitOr: 4 ].
+	^ mod
 ]
 
 {

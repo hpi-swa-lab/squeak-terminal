@@ -110,6 +110,25 @@ SWATermTest >> testCellsOfRowMatchCellAt [
 
 {
 	#category : #tests,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
+}
+SWATermTest >> testClickIsEncodedOnlyInMouseMode [
+	| t esc |
+	t := SWATerm rows: 10 cols: 40.
+	[ esc := String with: (Character value: 27).
+	t mouseButton: 1 pressed: true row: 2 col: 3 mod: 0.
+	t mouseButton: 1 pressed: false row: 2 col: 3 mod: 0.
+	self assert: t drainOutput isEmpty.
+	t feed: esc, '[?1000h', esc, '[?1006h'.
+	t mouseButton: 1 pressed: true row: 2 col: 3 mod: 0.
+	t mouseButton: 1 pressed: false row: 2 col: 3 mod: 0.
+	t mouseButton: 3 pressed: true row: 0 col: 0 mod: 4.
+	self assert: esc, '[<0;4;3M', esc, '[<0;4;3m', esc, '[<18;1;1M' equals: t drainOutput asString ]
+		ensure: [ t free ].
+]
+
+{
+	#category : #tests,
 	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:57'
 }
 SWATermTest >> testColours [

@@ -417,6 +417,26 @@ SWATerm >> maxScrollback [
 ]
 
 {
+	#category : #input,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
+}
+SWATerm >> mouseButton: button pressed: aBoolean row: row col: col mod: modifiers [
+	"libvterm buttons: 1 left, 2 middle, 3 right."
+	self isDead ifTrue: [ ^ self ].
+	lib vterm: vt mouseMoveRow: row col: col mod: modifiers.
+	lib vterm: vt mouseButton: button pressed: aBoolean mod: modifiers.
+]
+
+{
+	#category : #input,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:25'
+}
+SWATerm >> mouseMoveRow: row col: col mod: modifiers [
+	self isDead ifTrue: [ ^ self ].
+	lib vterm: vt mouseMoveRow: row col: col mod: modifiers.
+]
+
+{
 	#category : #scrollback,
 	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
 }
