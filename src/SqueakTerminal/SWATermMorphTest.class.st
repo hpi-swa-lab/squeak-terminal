@@ -96,6 +96,25 @@ SWATermMorphTest >> testRightHalfOfWideCharacterDrawsNothing [
 
 {
 	#category : #tests,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermMorphTest >> testScrolledBackViewStaysOnItsLines [
+	| m t topLine |
+	m := SWATermMorph new.
+	t := m terminal.
+	topLine := [ (((t cellsIn: (m displayRowBytes: 0)) collect: [ :c | c character ]) as: String) withBlanksTrimmed ].
+	[ 1 to: 30 do: [ :i | m feed: 'line ', i printString, String crlf ].
+	m scrollHistoryBy: 3.
+	self assert: 'line 5' equals: topLine value.
+	m feed: 'more', String crlf.
+	self assert: 'line 5' equals: topLine value.
+	m scrollToBottom.
+	self deny: m isScrolledBack ]
+		ensure: [ t free ].
+]
+
+{
+	#category : #tests,
 	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:56'
 }
 SWATermMorphTest >> testTextChangeRepaintsRow [

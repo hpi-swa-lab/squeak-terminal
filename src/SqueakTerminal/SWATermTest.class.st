@@ -257,6 +257,20 @@ SWATermTest >> testRowCodepoints [
 
 {
 	#category : #tests,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermTest >> testScrollbackKeepsLinesScrolledOff [
+	| t |
+	t := SWATerm rows: 5 cols: 20.
+	[ 1 to: 8 do: [ :i | t feed: 'line ', i printString, String crlf ].
+	self assert: 4 equals: t scrollbackSize.
+	self assert: 'line 1              ' equals:
+		(((t cellsIn: (t historyRowBytes: 1)) collect: [ :c | c character ]) as: String) ]
+		ensure: [ t free ].
+]
+
+{
+	#category : #tests,
 	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:57'
 }
 SWATermTest >> testScrollsAtBottom [
@@ -295,6 +309,23 @@ SWATermTest >> testUtf8BytesPassThrough [
 SWATermTest >> testValidateProcessKeepsALiveTerminal [
 	self deny: terminal validateProcess.
 	self deny: terminal isDead.
+]
+
+{
+	#category : #tests,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 13:37'
+}
+SWATermTest >> testWheelIsEncodedOnlyInMouseMode [
+	| t esc |
+	t := SWATerm rows: 10 cols: 40.
+	[ esc := String with: (Character value: 27).
+	t wheelUp: true row: 2 col: 3 mod: 0.
+	self assert: t drainOutput isEmpty.
+	t feed: esc, '[?1000h', esc, '[?1006h'.
+	t wheelUp: true row: 2 col: 3 mod: 0.
+	t wheelUp: false row: 2 col: 3 mod: 0.
+	self assert: esc, '[<64;4;3M', esc, '[<65;4;3M' equals: t drainOutput asString ]
+		ensure: [ t free ].
 ]
 
 {

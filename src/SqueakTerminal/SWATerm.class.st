@@ -24,7 +24,11 @@ Class {
 		'cols',
 		'ownerPid',
 		'readPos',
-		'readCell'
+		'readCell',
+		'scrollback',
+		'pushedLines',
+		'sbCallbacks',
+		'sbPushline'
 	],
 	#category : #SqueakTerminal,
 	#'squeak_changestamp' : '<historical>'
@@ -129,6 +133,14 @@ SWATerm >> cellsOfRow: row [
 ]
 
 {
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATerm >> clearScrollback [
+	scrollback := OrderedCollection new.
+]
+
+{
 	#category : #accessing,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:47'
 }
@@ -195,19 +207,38 @@ SWATerm >> feed: aByteArrayOrString [
 
 {
 	#category : #'initialize-release',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:42'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
 }
 SWATerm >> free [
 	"Release the libvterm instance. Screen/state are owned by vt and freed with it."
 	"If the terminal is dead (nil or snapshot-nulled handles) do NOT call
 	 vterm_free: -- freeing a null/dangling pointer segfaults. Just drop refs."
 	self isDead ifTrue: [ vt := nil. screen := nil. state := nil. ^ self ].
-	lib vterm_free: vt. vt := nil. screen := nil. state := nil
+	lib vterm_free: vt. vt := nil. screen := nil. state := nil.
+	sbCallbacks ifNotNil: [ sbCallbacks free. sbCallbacks := nil ].
+	sbPushline ifNotNil: [ sbPushline free. sbPushline := nil ].
+]
+
+{
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATerm >> historyRowBytes: index [
+	"Index 1 is the oldest line. Answers the row padded or cut to the current width."
+	| stored size bytes |
+	stored := scrollback at: index.
+	size := SWATermCell externalType byteSize.
+	stored size >= (cols * size) ifTrue: [ ^ stored copyFrom: 1 to: cols * size ].
+	bytes := ByteArray new: cols * size.
+	bytes replaceFrom: 1 to: stored size with: stored startingAt: 1.
+	stored size + 1 to: bytes size by: size do: [ :i |
+		bytes replaceFrom: i to: i + size - 1 with: stored startingAt: stored size - size + 1 ].
+	^ bytes
 ]
 
 {
 	#category : #'initialize-release',
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:47'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
 }
 SWATerm >> initRows: r cols: c [
 	rows := r.
@@ -219,6 +250,28 @@ SWATerm >> initRows: r cols: c [
 	screen := lib vterm_obtain_screen: vt.
 	state := lib vterm_obtain_state: vt.
 	lib vterm_screen_reset: screen hard: 1.
+	self installScrollback.
+]
+
+{
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATerm >> installScrollback [
+	"libvterm keeps the pointer to the callbacks struct, so it lives in external memory as long as screen does.
+	 sb_pushline is the seventh slot of VTermScreenCallbacks."
+	scrollback ifNil: [ scrollback := OrderedCollection new ].
+	pushedLines ifNil: [ pushedLines := 0 ].
+	sbPushline := FFICallback
+		signature: #(int32_t int32_t 'void*' 'void*')
+		block: [ :n :cells :user |
+			"An exception unwinding out of here cannot cross the C frame of vterm_input_write."
+			[ self pushScrollbackCells: cells cols: n ] on: Error do: [ :e | ].
+			1 ].
+	sbCallbacks := ExternalAddress allocate: 10 * 8.
+	1 to: 10 * 8 do: [ :i | sbCallbacks byteAt: i put: 0 ].
+	sbCallbacks pointerAt: 6 * 8 + 1 put: sbPushline getHandle.
+	lib vterm_screen: screen setCallbacks: sbCallbacks user: ExternalAddress new.
 ]
 
 {
@@ -356,6 +409,43 @@ SWATerm >> keyUp [	^ 5
 ]
 
 {
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATerm >> maxScrollback [
+	^ 5000
+]
+
+{
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATerm >> pushScrollbackCells: cells cols: n [
+	"The cells are only valid during the callback. The trailing run of identical cells is dropped;
+	 #historyRowBytes: restores it by repeating the last cell."
+	| from size keep bytes |
+	from := (cells isKindOf: ExternalStructure) ifTrue: [ cells getHandle ] ifFalse: [ cells ].
+	size := SWATermCell externalType byteSize.
+	keep := n.
+	[ keep > 1 and: [ (1 to: size by: 8) allSatisfy: [ :o |
+		(from unsignedLongLongAt: keep - 2 * size + o) = (from unsignedLongLongAt: n - 1 * size + o) ] ] ]
+			whileTrue: [ keep := keep - 1 ].
+	bytes := ByteArray new: keep * size.
+	1 to: bytes size by: 8 do: [ :i | bytes unsignedLongLongAt: i put: (from unsignedLongLongAt: i) ].
+	scrollback addLast: bytes.
+	scrollback size > self maxScrollback ifTrue: [ scrollback removeFirst ].
+	pushedLines := pushedLines + 1.
+]
+
+{
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATerm >> pushedLines [
+	^ pushedLines ifNil: [ 0 ]
+]
+
+{
 	#category : #'initialize-release',
 	#'squeak_changestamp' : 'MCPServer 7/24/2026 14:45'
 }
@@ -438,6 +528,14 @@ SWATerm >> rows [
 ]
 
 {
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATerm >> scrollbackSize [
+	^ scrollback ifNil: [ 0 ] ifNotNil: [ scrollback size ]
+]
+
+{
 	#category : #testing,
 	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 14:47'
 }
@@ -452,4 +550,15 @@ SWATerm >> validateProcess [
 	ownerPid ifNil: [ ownerPid := pid ].
 	ownerPid = pid ifFalse: [ self beDead ].
 	^ self isDead
+]
+
+{
+	#category : #input,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 13:37'
+}
+SWATerm >> wheelUp: up row: row col: col mod: modifiers [
+	"libvterm only encodes this when the application enabled mouse reporting."
+	self isDead ifTrue: [ ^ self ].
+	lib vterm: vt mouseMoveRow: row col: col mod: modifiers.
+	lib vterm: vt mouseButton: (up ifTrue: [ 4 ] ifFalse: [ 5 ]) pressed: true mod: modifiers.
 ]

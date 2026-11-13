@@ -234,6 +234,27 @@ SWATermLibrary >> vterm: vt keyboardUnichar: codepoint mod: modifiers [
 ]
 
 {
+	#category : #mouse,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 13:37'
+}
+SWATermLibrary >> vterm: vt mouseButton: button pressed: aBoolean mod: modifiers [
+	"void vterm_mouse_button(VTerm *vt, int button, bool pressed, VTermModifier mod)
+	 Buttons 4 and 5 are wheel up and down."
+	<cdecl: void 'vterm_mouse_button' (void* int32_t bool int32_t) module: 'vterm'>
+	^ self externalCallFailed
+]
+
+{
+	#category : #mouse,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 13:37'
+}
+SWATermLibrary >> vterm: vt mouseMoveRow: row col: col mod: modifiers [
+	"void vterm_mouse_move(VTerm *vt, int row, int col, VTermModifier mod)"
+	<cdecl: void 'vterm_mouse_move' (void* int32_t int32_t int32_t) module: 'vterm'>
+	^ self externalCallFailed
+]
+
+{
 	#category : #'api-vterm',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:20'
 }
@@ -316,6 +337,17 @@ SWATermLibrary >> vterm_screen: screen getChars: chars len: len rect: rect [
 	 (one uint32 per cell, reading order). rect is passed BY VALUE. Answers the
 	 number of codepoints that would be written (may exceed len)."
 	<cdecl: size_t 'vterm_screen_get_chars' (void* char* size_t SWATermRect) module: 'vterm'>
+	^ self externalCallFailed
+]
+
+{
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:15'
+}
+SWATermLibrary >> vterm_screen: screen setCallbacks: callbacks user: user [
+	"void vterm_screen_set_callbacks(VTermScreen *screen, const VTermScreenCallbacks *callbacks, void *user)
+	 libvterm keeps the pointer, so callbacks must stay allocated while screen lives."
+	<cdecl: void 'vterm_screen_set_callbacks' (void* void* void*) module: 'vterm'>
 	^ self externalCallFailed
 ]
 

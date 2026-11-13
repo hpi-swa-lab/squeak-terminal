@@ -20,7 +20,9 @@ Class {
 		'gridValid',
 		'refreshPending',
 		'cursorChar',
-		'lastInputTime'
+		'lastInputTime',
+		'scrollOffset',
+		'seenPushedLines'
 	],
 	#classVars : [
 		'DebugEvents'
@@ -496,6 +498,21 @@ SWATermMorph >> detachAfterSnapshot [
 ]
 
 {
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermMorph >> displayRowBytes: row [
+	| offset index |
+	offset := scrollOffset ifNil: [ 0 ].
+	offset = 0 ifTrue: [ ^ terminal rowBytes: row ].
+	index := terminal scrollbackSize - offset + row + 1.
+	index < 1 ifTrue: [ ^ ByteArray new ].
+	^ index <= terminal scrollbackSize
+		ifTrue: [ terminal historyRowBytes: index ]
+		ifFalse: [ terminal rowBytes: index - terminal scrollbackSize - 1 ]
+]
+
+{
 	#category : #fonts,
 	#'squeak_changestamp' : 'MCPServer 7/27/2026 15:51'
 }
@@ -590,7 +607,7 @@ SWATermMorph >> drawGlyphOf: cell color: fg at: aPoint on: aCanvas [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
 }
 SWATermMorph >> drawOn: aCanvas [
 	"Blit the grid cached in gridForm. Reading the cells costs one FFI call each,
@@ -604,7 +621,21 @@ SWATermMorph >> drawOn: aCanvas [
 	self extent area = 0 ifTrue: [ ^ self ].
 	self gridIsValid ifFalse: [ self repaintGrid ].
 	aCanvas drawImage: gridForm at: self topLeft.
-	self drawCursorOn: aCanvas origin: self topLeft.
+	self isScrolledBack ifFalse: [ self drawCursorOn: aCanvas origin: self topLeft ].
+	self drawScrollIndicatorOn: aCanvas.
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermMorph >> drawScrollIndicatorOn: aCanvas [
+	| label extent |
+	self isScrolledBack ifFalse: [ ^ self ].
+	label := '-', scrollOffset printString, ' / ', terminal scrollbackSize printString.
+	extent := (font widthOfString: label) @ font height + (8 @ 2).
+	aCanvas fillRectangle: (self topRight - (extent x @ 0) extent: extent) color: defaultFg.
+	aCanvas drawString: label at: self topRight - (extent x - 4 @ -1) font: font color: defaultBg.
 ]
 
 {
@@ -643,6 +674,20 @@ SWATermMorph >> feed: bytesOrString [
 	"Feed emulator output and request a redraw."
 	terminal feed: bytesOrString.
 	self terminalChanged.
+]
+
+{
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermMorph >> followScrollback [
+	"Keeps a scrolled-back view on the same lines while new output pushes more into the history."
+	| pushed |
+	pushed := terminal pushedLines.
+	(self isScrolledBack and: [ seenPushedLines notNil and: [ pushed ~= seenPushedLines ] ]) ifTrue: [
+		scrollOffset := (scrollOffset + pushed - seenPushedLines) min: terminal scrollbackSize.
+		self invalidRect: (self topLeft extent: self width @ cellHeight) ].
+	seenPushedLines := pushed.
 ]
 
 {
@@ -808,6 +853,14 @@ SWATermMorph >> handlesMouseMove: evt [
 ]
 
 {
+	#category : #'event handling',
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 13:37'
+}
+SWATermMorph >> handlesMouseWheel: evt [
+	^ true
+]
+
+{
 	#category : #testing,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 12:49'
 }
@@ -886,8 +939,16 @@ SWATermMorph >> isDetached [
 ]
 
 {
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermMorph >> isScrolledBack [
+	^ (scrollOffset ifNil: [ 0 ]) > 0
+]
+
+{
 	#category : #'event handling',
-	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
 }
 SWATermMorph >> keyStroke: evt [
 	"Translate a Squeak keystroke into libvterm keyboard input, then forward the
@@ -898,6 +959,7 @@ SWATermMorph >> keyStroke: evt [
 	"Clipboard shortcuts take priority (Ctrl+V paste; Ctrl+C copy when selected)."
 	(self handleClipboardShortcut: evt) ifTrue: [ ^ evt wasHandled: true ].
 	(self handleFontShortcut: evt) ifTrue: [ ^ evt wasHandled: true ].
+	self scrollToBottom.
 	char := evt keyCharacter.
 	code := char asInteger.
 	mod := 0.
@@ -986,6 +1048,28 @@ SWATermMorph >> mouseUp: evt [
 	selectionEnd := self cellAtPoint: evt position.
 	self hasSelection ifFalse: [ selectionStart := selectionEnd := nil ].
 	self gridChanged.
+]
+
+{
+	#category : #'event handling',
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermMorph >> mouseWheel: evt [
+	| cell mod reply |
+	pty ifNil: [ ^ self ].
+	self isDetached ifTrue: [ ^ self ].
+	(evt isWheelUp or: [ evt isWheelDown ]) ifFalse: [ ^ self ].
+	cell := self cellAtPoint: evt position.
+	mod := 0.
+	evt shiftPressed ifTrue: [ mod := mod bitOr: 1 ].
+	evt controlKeyPressed ifTrue: [ mod := mod bitOr: 4 ].
+	self logEvent: [ 'mouseWheel: ', (evt isWheelUp ifTrue: [ 'up' ] ifFalse: [ 'down' ]), ' at ', cell printString ].
+	terminal wheelUp: evt isWheelUp row: cell y col: cell x mod: mod.
+	reply := terminal drainOutput.
+	reply isEmpty
+		ifTrue: [ self scrollHistoryBy: (evt isWheelUp ifTrue: [ 3 ] ifFalse: [ -3 ]) ]
+		ifFalse: [ self writeInput: reply ].
+	evt wasHandled: true.
 ]
 
 {
@@ -1177,7 +1261,7 @@ SWATermMorph >> repaintCells: cellsByRow [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
 }
 SWATermMorph >> repaintGrid [
 	"repaintRow:cells:on: fills whole rows, so only the strip below the last row needs clearing."
@@ -1190,7 +1274,7 @@ SWATermMorph >> repaintGrid [
 	self updateCursorCache.
 	cellsByRow := Dictionary new.
 	0 to: terminal rows - 1 do: [ :row |
-		cellsByRow at: row put: (terminal cellsOfRow: row) ].
+		cellsByRow at: row put: (terminal cellsIn: (self displayRowBytes: row)) ].
 	self repaintCells: cellsByRow.
 	gridValid := true.
 ]
@@ -1309,6 +1393,31 @@ SWATermMorph >> scheduleTerminalRefresh [
 ]
 
 {
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermMorph >> scrollHistoryBy: lines [
+	"Positive lines scroll back into the history."
+	| new |
+	terminal ifNil: [ ^ self ].
+	new := ((scrollOffset ifNil: [ 0 ]) + lines) max: 0.
+	new := new min: terminal scrollbackSize.
+	new = (scrollOffset ifNil: [ 0 ]) ifTrue: [ ^ self ].
+	scrollOffset := new.
+	seenPushedLines := terminal pushedLines.
+	self clearSelection.
+	self gridChanged.
+]
+
+{
+	#category : #scrollback,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
+}
+SWATermMorph >> scrollToBottom [
+	self isScrolledBack ifTrue: [ self scrollHistoryBy: scrollOffset negated ].
+]
+
+{
 	#category : #selection,
 	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
 }
@@ -1321,7 +1430,7 @@ SWATermMorph >> selectAll [
 
 {
 	#category : #selection,
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:55'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
 }
 SWATermMorph >> selectedText [
 	"Extract the selected text as a String. Linear (stream) selection: from the
@@ -1334,12 +1443,13 @@ SWATermMorph >> selectedText [
 	last := sel second.
 	^ String streamContents: [ :s |
 		first y to: last y do: [ :row |
-			| startCol endCol lineStream line |
+			| startCol endCol lineStream line cells |
 			startCol := row = first y ifTrue: [ first x ] ifFalse: [ 0 ].
 			endCol := row = last y ifTrue: [ last x ] ifFalse: [ terminal cols - 1 ].
 			lineStream := WriteStream on: (WideString new: 0).
+			cells := terminal cellsIn: (self displayRowBytes: row).
 			startCol to: endCol do: [ :col |
-				lineStream nextPut: (terminal cellAt: row at: col) character ].
+				lineStream nextPut: (cells at: col + 1) character ].
 			line := lineStream contents.
 			"trim trailing spaces on full-width row spans (typical terminal copy behavior)"
 			row < last y ifTrue: [ line := line withBlanksTrimmed = '' 
@@ -1492,7 +1602,7 @@ SWATermMorph >> terminal [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:13'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:17'
 }
 SWATermMorph >> terminalChanged [
 	"Invalidate the changed rows as ONE rectangle: DamageRecorder does not merge
@@ -1500,6 +1610,7 @@ SWATermMorph >> terminalChanged [
 	| rows newSignatures changedCells dirty order |
 	terminal ifNil: [ ^ self changed ].
 	(cellWidth isNil or: [ cellHeight isNil ]) ifTrue: [ ^ self changed ].
+	self followScrollback.
 	rows := terminal rows.
 	(rowSignatures isNil or: [ rowSignatures size ~= rows ]) ifTrue: [
 		rowSignatures := Array new: rows.
@@ -1511,7 +1622,7 @@ SWATermMorph >> terminalChanged [
 	0 to: rows - 1 do: [ :row |
 		| bytes |
 		"Whole cells, colours included: mc moves its selection bar without changing a character."
-		bytes := terminal rowBytes: row.
+		bytes := self displayRowBytes: row.
 		newSignatures at: row + 1 put: bytes.
 		((rowSignatures at: row + 1) notNil and: [
 			(ByteString compare: (rowSignatures at: row + 1) with: bytes collated: order) = 2 ])
