@@ -527,7 +527,7 @@ SWATermMorph >> drawCell: cell row: row col: col origin: origin on: aCanvas [
 
 {
 	#category : #drawing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 18:36'
 }
 SWATermMorph >> drawCursorOn: aCanvas origin: origin [
 	| x y cursorBounds |
@@ -541,8 +541,7 @@ SWATermMorph >> drawCursorOn: aCanvas origin: origin [
 			blinkState ifTrue: [
 				aCanvas fillRectangle: cursorBounds color: defaultFg.
 				(cursorChar notNil and: [ cursorChar ~= $  ]) ifTrue: [
-					aCanvas drawString: (String with: cursorChar)
-						at: (x @ y) font: font color: defaultBg ] ] ]
+					self drawGlyph: cursorChar at: x @ y color: defaultBg on: aCanvas ] ] ]
 		ifFalse: [
 			aCanvas frameRectangle: cursorBounds width: 1 color: defaultFg ].
 ]
@@ -559,6 +558,14 @@ SWATermMorph >> drawDetachedOn: aCanvas [
 		at: self topLeft + (cellWidth @ cellHeight)
 		font: font
 		color: defaultFg
+]
+
+{
+	#category : #drawing,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 18:53'
+}
+SWATermMorph >> drawGlyph: aCharacter at: aPoint color: aColor on: aCanvas [
+	aCanvas drawString: (String with: aCharacter) at: aPoint font: font color: aColor.
 ]
 
 {
@@ -648,7 +655,7 @@ SWATermMorph >> font [
 
 {
 	#category : #accessing,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 17:43'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/9/2026 18:53'
 }
 SWATermMorph >> font: aFont [
 	"Set the rendering font and recompute the cell metrics. The font should be
