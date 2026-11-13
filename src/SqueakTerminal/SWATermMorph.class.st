@@ -287,6 +287,18 @@ SWATermMorph class >> open [
 ]
 
 {
+	#category : #'instance creation',
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 15:17'
+}
+SWATermMorph class >> openOpenCode [
+	"The pty buffers the typed line until the shell is ready to read it."
+	| m |
+	m := self open ifNil: [^ nil].
+	m writeInput: 'opencode', String cr.
+	^ m
+]
+
+{
 	#category : #'class initialization',
 	#'squeak_changestamp' : 'MCPServer (SqueakXR) 11/6/2026 15:15'
 }
@@ -907,7 +919,7 @@ SWATermMorph >> idlePollInterval [
 
 {
 	#category : #'initialize-release',
-	#'squeak_changestamp' : 'MCPServer 7/23/2026 15:36'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 15:40'
 }
 SWATermMorph >> initialize [
 	super initialize.
@@ -917,7 +929,7 @@ SWATermMorph >> initialize [
 	defaultFg := Color white.
 	defaultBg := Color black.
 	blinkState := true.
-	terminal := SWATerm rows: 24 cols: 80.
+	terminal := SWATerm rows: 36 cols: 120.
 	self hResizing: #spaceFill; vResizing: #spaceFill.
 	self bounds: (0@0 extent: self preferredExtent).
 	self color: defaultBg.
