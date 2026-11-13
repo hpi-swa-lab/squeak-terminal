@@ -182,6 +182,15 @@ SWATerm >> drainOutput [
 ]
 
 {
+	#category : #input,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:42'
+}
+SWATerm >> endPaste [
+	self isDead ifTrue: [ ^ self ].
+	lib vterm_keyboard_end_paste: vt.
+]
+
+{
 	#category : #emulation,
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 18:29'
 }
@@ -553,6 +562,15 @@ SWATerm >> rows [
 }
 SWATerm >> scrollbackSize [
 	^ scrollback ifNil: [ 0 ] ifNotNil: [ scrollback size ]
+]
+
+{
+	#category : #input,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:42'
+}
+SWATerm >> startPaste [
+	self isDead ifTrue: [ ^ self ].
+	lib vterm_keyboard_start_paste: vt.
 ]
 
 {

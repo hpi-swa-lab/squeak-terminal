@@ -275,6 +275,26 @@ SWATermLibrary >> vterm_input: vt write: bytes size: len [
 ]
 
 {
+	#category : #keyboard,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:42'
+}
+SWATermLibrary >> vterm_keyboard_end_paste: vt [
+	"void vterm_keyboard_end_paste(VTerm *vt): ESC[201~, only in bracketed paste mode."
+	<cdecl: void 'vterm_keyboard_end_paste' (void*) module: 'vterm'>
+	^ self externalCallFailed
+]
+
+{
+	#category : #keyboard,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:42'
+}
+SWATermLibrary >> vterm_keyboard_start_paste: vt [
+	"void vterm_keyboard_start_paste(VTerm *vt): ESC[200~, only in bracketed paste mode (DECSET 2004)."
+	<cdecl: void 'vterm_keyboard_start_paste' (void*) module: 'vterm'>
+	^ self externalCallFailed
+]
+
+{
 	#category : #'api-vterm',
 	#'squeak_changestamp' : 'MCPServer 7/23/2026 14:20'
 }

@@ -78,6 +78,24 @@ SWATermTest >> testBeDeadThenReinit [
 
 {
 	#category : #tests,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:42'
+}
+SWATermTest >> testBracketedPasteOnlyWhenRequested [
+	| t esc |
+	t := SWATerm rows: 10 cols: 40.
+	[ esc := String with: (Character value: 27).
+	t startPaste.
+	t endPaste.
+	self assert: t drainOutput isEmpty.
+	t feed: esc, '[?2004h'.
+	t startPaste.
+	t endPaste.
+	self assert: esc, '[200~', esc, '[201~' equals: t drainOutput asString ]
+		ensure: [ t free ].
+]
+
+{
+	#category : #tests,
 	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 10:57'
 }
 SWATermTest >> testCarriageReturnLineFeed [

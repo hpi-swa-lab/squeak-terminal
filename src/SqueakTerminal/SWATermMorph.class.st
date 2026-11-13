@@ -422,6 +422,21 @@ SWATermMorph >> clearSelection [
 ]
 
 {
+	#category : #clipboard,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:43'
+}
+SWATermMorph >> clipboardHasOnlyPicture [
+	"Raw Windows formats: 1, 7, 13 are text; 2, 8, 17 are bitmaps."
+	| raw mimes |
+	[ raw := ExtendedClipboardInterface current readAvailableRawFormats.
+	  mimes := ExtendedClipboardInterface current readAvailableFormats ]
+		on: Error do: [ :e | ^ false ].
+	(raw includesAnyOf: #(1 7 13)) ifTrue: [ ^ false ].
+	^ (raw includesAnyOf: #(2 8 17))
+		or: [ mimes anySatisfy: [ :m | m asString beginsWith: 'image/' ] ]
+]
+
+{
 	#category : #drawing,
 	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:11'
 }
@@ -1147,18 +1162,41 @@ SWATermMorph >> orderedSelection [
 
 {
 	#category : #clipboard,
-	#'squeak_changestamp' : 'MCPServer (jl) 11/11/2026 11:16'
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:42'
 }
 SWATermMorph >> paste [
-	"Send the clipboard contents to the shell as if typed."
+	"Text goes in as typed, framed by ESC[200~ ... ESC[201~ when the application asked for
+	 bracketed paste. #clipboardText falls back to the image's own clipboard when the system one
+	 holds no text, so a picture is checked first."
 	| text |
 	pty ifNil: [ ^ self ].
+	self clipboardHasOnlyPicture ifTrue: [ ^ self pastePictureSignal ].
 	text := Clipboard clipboardText.
 	text isEmptyOrNil ifTrue: [ ^ self ].
 	self logEvent: [ 'paste ', text size printString, ' chars' ].
-	"Normalize line endings to CR (what a terminal expects for Enter)."
 	text := text asString copyReplaceAll: (String with: Character lf) with: (String with: Character cr).
+	terminal startPaste.
+	self forwardInput.
 	self writeInput: text utf8Encoded.
+	terminal endPaste.
+	self forwardInput.
+]
+
+{
+	#category : #clipboard,
+	#'squeak_changestamp' : 'MCPServer (jl) 11/13/2026 14:42'
+}
+SWATermMorph >> pastePictureSignal [
+	"opencode and Claude Code read a picture from the system clipboard themselves; they
+	 only need to see a paste: an empty bracketed paste, or Ctrl+V when that mode is off."
+	| reply |
+	terminal startPaste.
+	reply := terminal drainOutput.
+	reply isEmpty ifTrue: [
+		terminal keyChar: $v mod: 4.
+		^ self forwardInput ].
+	terminal endPaste.
+	self writeInput: reply, terminal drainOutput.
 ]
 
 {
